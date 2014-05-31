@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 #encoding=utf-8
 
+import sys, json
+from math import log
 import numpy as np
-import sys, json, os
+from scipy import sparse
+from scipy import io
 import matplotlib.pyplot as plt
 import pdb, time
 
@@ -11,65 +14,71 @@ class DataAnalysis(object):
     def __init__(self, filepath):
         super(DataAnalysis, self).__init__()
         self.__filepath = filepath
-        self.__userset = []
-        self.__itemset = []
-        self.__instanceSet = []
+        self.userset = []# user set
+        self.itemset = {}# item set: {"item":index,...}
+        self.__instanceSet = {}# instance data set: {user:[item,...],...}
+        self.instancenum = 0# num of instance
         self._import_data()
-        self._create_ui_matrix()
+        t0 = time.clock()
+        self._create_ui_matrix("offline")
+        t1 = time.clock()
+        print "create_ui_matrix time costs"
+        print t1-t0
 
     def _import_data(self):
         try:
             with open(self.__filepath, 'r') as f:
+                temp_itemset = []# item set       
                 templine = f.readline()
-                instancenum = 1
                 while(templine):
+                    self.instancenum += 1
                     temp = templine.split('\t')[:2]
                     user = int(temp[0])
                     item = int(temp[1][:-1])
-                    self.__userset.append(user)
-                    self.__itemset.append(item)
-                    self.__instanceSet.append([user, item])
-                    try:    
-                        templine = f.readline()
-                        instancenum += 1
-                    except Exception, e:
-                        print 'read error'
-                        print e
+                    temp_itemset.append(item)
+                    try:
+                        self.__instanceSet[user].append(item)
+                    except:
+                        self.__instanceSet[user] = [item]
+                    templine = f.readline()
         except Exception, e:
             print "import datas error !"
             print e
-            pdb.set_trace()
             sys.exit()
         f.close()
-        self.__userset = list(set(self.__userset))# remove redundancy
-        self.__itemset = list(set(self.__itemset))# remove redundancy
-        self.__usernum = len(self.__userset)
-        self.__itemnum = len(self.__itemset)
+        self.userset = self.__instanceSet.keys()
+        temp_itemset = list(set(temp_itemset))# remove redundancy
+        self.usernum = len(self.userset)
+        self.itemnum = len(temp_itemset)
+        for item_index in range(self.itemnum):
+            self.itemset[temp_itemset[item_index]] = item_index
+
         print "user num:"
-        print len(self.__userset)
+        print self.usernum
         print "item num:"
-        print len(self.__itemset)
+        print self.itemnum
         print "instance num:"
-        print len(self.__instanceSet)
+        print self.instancenum
 
     def _create_ui_matrix(self, method="online"):
+        filepath = "./offline_results/ui_matrix"
         if method == "online":
-            self.ui_matrix = np.zeros([self.__usernum, self.__itemnum], dtype=np.float)
-            # pdb.set_trace()
-            for each_instance in self.__instanceSet:# exacting
-                self.ui_matrix[self.__userset.index(each_instance[0])][self.__itemset.index(each_instance[1])] = 1.0
-            self.store_data(json.dumps(self.ui_matrix.tolist(), ensure_ascii=False),\
-                    "./offline_results/ui_matrix.data")
+            self.ui_matrix = sparse.lil_matrix((self.itemnum, self.usernum))
+            user_index = 0
+            for user, item in self.__instanceSet.iteritems():
+                for eachitem in item:
+                    self.ui_matrix[self.itemset[eachitem], user_index] = 1 # index operation is exacting !
+                user_index += 1
+            try:
+                io.mmwrite(filepath, self.ui_matrix)
+            except Exception, e:
+                print e
+                sys.exit()
         elif method == "offline":
-            self.ui_matrix = self.read_data("./offline_results/ui_matrix.data")
-            if self.ui_matrix != "":
-                try:
-                    self.ui_matrix = json.loads(self.ui_matrix)
-                except Exception, e:
-                    print e
-                    sys.exit()
-                self.ui_matrix = np.array(self.ui_matrix)
-            else:
+            try:
+                self.ui_matrix = io.mmread(filepath)
+            except Exception,e:
+                print e
                 sys.exit()
         else:
             print "method arg error !"
@@ -81,49 +90,66 @@ class DataAnalysis(object):
         target = 'user' means similarity among users, target = 'item' means similarity among items.
         method = 'online' means online calculation, method = 'offline' means using offline results.
         """
+        filepath = "./offline_results/similarity"
         if method == "online":# online calculation
             tinynum = 0.00000001
-            if target == "user":# for user
-                # intersection = np.dot(np.transpose(self.ui_matrix), self.ui_matrix)# shape: (usernum, usernum)
-                unionsection = np.zeros([self.__usernum, self.__usernum], dtype=np.float)
-                for u in np.arange(self.__usernum):
-                    temp = np.transpose(self.ui_matrix[:, u]*np.ones([self.__usernum-u, self.__itemnum]))# shape: (itemnum, usernum-u)
-                    # sum plus intersection equals to unionsection, then plus a tiny num to avoid zero division
+            if target == "user":# for user done
+                self.ui_matrix = self.ui_matrix.tocsc()
+                intersection = (self.ui_matrix.transpose()).dot(self.ui_matrix)
+                unionsection = sparse.lil_matrix((self.usernum, self.usernum))# perfect for fancy indexing
+                for u in np.arange(self.usernum):
+                    # may be improved !
+                    times = int(log(self.usernum-u, 2))
+                    temp = self.ui_matrix[:, u]
+                    for each in np.arange(times):
+                        temp = sparse.hstack([temp, temp])
+                    temp = temp.tocsc()
+                    if self.usernum-u-2**times > 0:
+                        temp = sparse.hstack([temp, temp[:,:self.usernum-u-2**times]])
+                    # sum subtracts intersection equals to unionsection, then plus a tiny num to avoid zero division
                     unionsection[u, u:] = (temp + self.ui_matrix[:, u:]).sum(0)\
-                        - intersection[u:, u] + np.ones([self.__usernum-u, ])*tinynum
-                unionsection = unionsection + np.transpose(unionsection)# to make a full matrix using symmetry(trace to be done!!)
-                # similarity = intersection/unionsection
-                similarity = np.dot(np.transpose(self.ui_matrix), self.ui_matrix)/unionsection# to save space
+                        - intersection[u, u:] + sparse.csc_matrix(np.ones([1, self.usernum-u]))*tinynum#np.ones([self.usernum-u, ])*tinynum
+                unionsection = unionsection.tocsc()
+                unionsection = unionsection + unionsection.transpose()# to make a full matrix using symmetry
+                similarity = intersection/unionsection
+                similarity.setdiag(np.ones([self.usernum, ]).tolist())
             elif target == "item":# for item
-                # intersection = np.dot(self.ui_matrix, np.transpose(self.ui_matrix))# shape: (itemnum, itemnum)
-                unionsection = np.zeros([self.__itemnum, self.__itemnum], dtype=np.float)
-                for o in np.arange(self.__itemnum):
-                    temp = self.ui_matrix[o, :]*np.ones([self.__itemnum-o, self.__usernum])# shape: (itemnum-o, usernum)
+                self.ui_matrix = self.ui_matrix.tocsr()
+                intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
+                unionsection = sparse.lil_matrix((self.itemnum, self.itemnum))
+                for o in np.arange(self.itemnum):
+                    # may be improved !
+                    times = int(log(self.itemnum-o, 2))
+                    temp = self.ui_matrix[o, :]
+                    for each in np.arange(times):
+                        temp = sparse.vstack([temp, temp])
+                    temp = temp.tocsr()
+                    if self.itemnum-o-2**times > 0:
+                        temp = sparse.vstack([temp, temp[:self.itemnum-o-2**times, :]])
                     unionsection[o:, o] = (temp + self.ui_matrix[o:, :]).sum(1)\
-                        - intersection[o:, o] + np.ones([self.__itemnum-o, ])*tinynum
-                unionsection = unionsection + np.transpose(unionsection)
-                # similarity = intersection/unionsection
-                similarity = np.dot(self.ui_matrix, np.transpose(self.ui_matrix))/unionsection# to save space
+                        - intersection[o:, o] + sparse.csr_matrix(np.ones([self.itemnum-o, 1]))*tinynum
+                unionsection = unionsection.tocsr()
+                unionsection = unionsection + unionsection.transpose()
+                similarity = intersection/unionsection
+                similarity.setdiag(np.ones([self.itemnum, ]).tolist())
             else:
                 print "target arg error !"
                 sys.exit()
             if target == "user" or target == "item":
-                self.store_data(json.dumps(similarity.tolist(), ensure_ascii=False),\
-                    "./offline_results/similarity_%s.data"%target)
+                try:
+                    io.mmwrite(filepath+"_%s"%target, similarity)
+                except Exception,e:
+                    print e
+                    sys.exit()
                 return similarity
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
-                similarity = self.read_data("./offline_results/similarity_%s.data"%target)
-                if similarity != "":
-                    try:
-                        similarity = json.loads(similarity)
-                    except Exception, e:
-                        print e
-                        sys.exit()
-                    similarity = np.array(similarity)
-                    return similarity
-                else:
+                try:
+                    similarity = io.mmread(filepath+"_%s"%target)
+                except Exception, e:
+                    print e
                     sys.exit()
+                return similarity
             else:
                 print "target arg error !"
                 sys.exit()
@@ -137,35 +163,38 @@ class DataAnalysis(object):
         target = 'item' means degree distribution for items.
         method = 'online' means online calculation,
         method = 'offline' means using offlinie results."""
+        filepath = "./offline_results/degree_distribution"
         if method == "online":# online calculation
             degree_distribution = {}
             if target == "user":# for users
-                degree = self.ui_matrix.sum(0).tolist()
+                degree = np.asarray(self.ui_matrix.sum(0))[0].tolist()
                 for eachdegree in set(degree):
                     degree_distribution[eachdegree] = degree.count(eachdegree)
             elif target == "item":# for items
-                degree = self.ui_matrix.sum(1).tolist()
+                degree = np.asarray(self.ui_matrix.sum(1).transpose())[0].tolist()
                 for eachdegree in set(degree):
                     degree_distribution[eachdegree] = degree.count(eachdegree)
             else:
                 print "target arg error !"
                 sys.exit()
-            if target == "user" or target == "item":
-                self.store_data(json.dumps(degree_distribution, ensure_ascii=False),\
-                    "./offline_results/degree_distribution_%s.data"%target)
-                return degree_distribution
+            degree_distribution = dict(sorted(degree_distribution.iteritems(),\
+                    key=lambda d:d[0],reverse = False))
+            self.store_data(json.dumps(degree_distribution, ensure_ascii=False),\
+                filepath+"_%s.json"%target)
+            return degree_distribution
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
-                degree_distribution = self.read_data("./offline_results/degree_distribution_%s.data"%target)
+                degree_distribution = self.read_data(filepath+"_%s.json"%target)
                 if degree_distribution != "":
                     try:
                         degree_distribution = json.loads(degree_distribution)
                     except Exception, e:
                         print e
                         sys.exit()
-                    print degree_distribution.keys()
+                    # print degree_distribution.keys()
                     return degree_distribution
                 else:
+                    print "read nothing !"
                     sys.exit()
             else:
                 print "target arg error !"
@@ -182,31 +211,56 @@ class DataAnalysis(object):
         """
         if method == "online":# online calculation
             if target == "user":# for user
-                col_sim = np.zeros([self.__usernum, ])
-                degree = self.ui_matrix.sum(0)# shape: (usernum, )
-                for u in np.arange(self.__usernum):
-                    # construct a similarity filtering matrix
-                    temp = self.ui_matrix[:, u]*np.ones([self.__itemnum, self.__itemnum])
-                    filtering_matrix = temp*np.transpose(temp)# shape (itemnum, itemnum)
-                    similarity = similarity*filtering_matrix
+                col_sim = sparse.lil_matrix((1, self.usernum))
+                self.ui_matrix = self.ui_matrix.tocsc()# fast column slicing operations
+                degree = self.ui_matrix.sum(0)
+                for u in np.arange(self.usernum):
+                    # construct a similarity filtering matrix??????????????
+                    if degree[0, u] != 0:
+                        times = int(log(self.itemnum, 2))
+                        temp = self.ui_matrix[:, u]
+                        for each in np.arange(times):
+                            temp = sparse.hstack([temp, temp])
+                        temp = temp.tocsc()
+                        if self.itemnum-2**times > 0:
+                            temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]])
+                        
+                        temp = temp.tocsc()
+                        similarity = similarity.tocsc()
+                        similarity = temp*(temp.transpose())*similarity
 
-                    temp = degree[u]*(degree[u] - 1)
-                    if temp == 0:
-                        temp = 1
-                    col_sim[u] = (np.sum(similarity)-np.trace(similarity))/temp
+                        temp = degree[0, u]*(degree[0, u] - 1)
+                        if temp == 0:
+                            temp = 1
+                        col_sim[0, u] = (similarity.sum()-similarity.diagonal().sum())/temp
+                    else:
+                        col_sim[0, u] = 0
+
             elif target == "item":# for item
-                col_sim = np.zeros([self.__itemnum, ])
-                degree = self.ui_matrix.sum(1)# shape: (itemnum, )
-                for o in np.arange(self.__itemnum):
-                    # construct a similarity filtering matrix
-                    temp = self.ui_matrix[o, :]*np.ones([self.__usernum, self.__usernum])
-                    filtering_matrix = temp*np.transpose(temp)# shape (usernum, usernum)
-                    similarity = similarity*filtering_matrix
-                    
-                    temp = degree[o]*(degree[o] - 1)
-                    if temp == 0:
-                        temp = 1
-                    col_sim[o] = (np.sum(similarity)-np.trace(similarity))/temp
+                col_sim = sparse.lil_matrix((self.itemnum, 1))
+                self.ui_matrix = self.ui_matrix.tocsr()
+                degree = self.ui_matrix.sum(1)
+                pdb.set_trace()
+                for o in np.arange(self.itemnum):
+                    if degree[o, 0] != 0:
+                        times = int(log(self.usernum, 2))
+                        temp = self.ui_matrix[o, :]
+                        for each in np.arange(times):
+                            temp = sparse.vstack([temp, temp])
+                        temp = temp.tocsr()
+                        if self.usernum-2**times > 0:
+                            temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]])
+
+                        temp = temp.tocsr()
+                        similarity = similarity.tocsr()
+                        similarity = temp*(temp.transpose())*similarity
+
+                        temp = degree[o, 0]*(degree[o, 0] - 1)
+                        if temp == 0:
+                            temp = 1
+                        col_sim[o, 0] = (similarity.sum()-similarity.diagonal().sum())/temp
+                    else:
+                        col_sim[o, 0] = 0
             else:
                 print "target arg error !"
                 sys.exit()
@@ -242,38 +296,38 @@ class DataAnalysis(object):
         method = 'online' means online calculation,
         method = 'offline' means using offline results.        
         """
+        filepath = "./offline_results/nn_degree"
         if method == "online":# online calculation
             tinynum = 0.00000001
             if target == "user":# for user
-                degree = self.ui_matrix.sum(0)
-                degree += np.ones([self.__usernum, ])*tinynum# to avoid zero division
-                nn_degree = (np.transpose(self.ui_matrix.sum(1)*np.ones([self.__usernum, self.__itemnum]))\
-                        *self.ui_matrix).sum(0)/degree
+                self.ui_matrix = self.ui_matrix.tocsc()
+                degree = sparse.csc_matrix(self.ui_matrix.sum(0))
+                degree = degree + sparse.csc_matrix(np.ones([1, self.usernum]))*tinynum# to avoid zero division
+                nn_degree = sparse.csc_matrix(self.ui_matrix.sum(1).transpose())\
+                    .dot(self.ui_matrix)/degree
             elif target == "item":# for item
-                degree = self.ui_matrix.sum(1)
-                degree += np.ones([self.__itemnum, ])*tinynum# to avoid zero division
-                nn_degree = (self.ui_matrix.sum(0)*np.ones([self.__itemnum, self.__usernum])\
-                        *self.ui_matrix).sum(1)/degree
+                self.ui_matrix = self.ui_matrix.tocsr()
+                degree = sparse.csr_matrix(self.ui_matrix.sum(1))
+                degree = degree + sparse.csr_matrix(np.ones([self.itemnum, 1]))*tinynum# to avoid zero division
+                nn_degree = self.ui_matrix.dot(sparse.csr_matrix(self.ui_matrix.sum(0).transpose()))/degree
             else:
                 print "target arg error !"
                 sys.exit()
             if target == "user" or target == "item":
-                self.store_data(json.dumps(nn_degree.tolist(), ensure_ascii=False),\
-                    "./offline_results/nn_degree_%s.data"%target)
+                try:
+                    io.mmwrite(filepath+"_%s"%target, nn_degree)
+                except Exception,e:
+                    print e
+                    sys.exit()
                 return nn_degree
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
-                nn_degree = self.read_data("./offline_results/nn_degree_%s.data"%target)
-                if nn_degree != "":
-                    try:
-                        nn_degree = json.loads(nn_degree)
-                    except Exception, e:
-                        print e
-                        sys.exit()
-                    nn_degree = np.array(nn_degree)
-                    return nn_degree
-                else:
+                try:
+                    nn_degree = io.mmread(filepath+"_%s"%target)
+                except Exception, e:
+                    print e
                     sys.exit()
+                return nn_degree
             else:
                 print "target arg error !"
                 sys.exit()
@@ -281,11 +335,13 @@ class DataAnalysis(object):
             print "method arg error !"
             sys.exit()
 
-    def draw_graph(self, analysis_data, data_type, target):
+    def draw_graph(self, analysis_data, data_type, target, save="off"):
+        filepath = "./image/"
         plt.figure()
         if data_type == "degree_distribution":# degree
             x = analysis_data.keys()
             y = analysis_data.values()
+            print x
             plt.xlabel("degree(%s)"%target)
             plt.ylabel("frequency")
             plt.title("degree distribution")
@@ -324,12 +380,53 @@ class DataAnalysis(object):
             plt.ylabel("collaborative similarity")
             plt.title("collaborative similarity-degree distribution")
         elif data_type == "nn_degree":# nearest neighbors' degree
-            pass
+            degree_nndegree = {}
+            if target == "user":# for user 
+                nn_degree = analysis_data.toarray()[0].tolist()
+                degree = np.asarray(self.ui_matrix.sum(0))[0].tolist()
+                for index in np.arange(self.usernum):
+                    try:
+                        degree_nndegree[degree[index]].append(nn_degree[index])
+                    except:
+                        degree_nndegree[degree[index]] = [nn_degree[index]]
+                for eachdegree, eachnn_degree in degree_nndegree.iteritems():
+                    degree_nndegree[eachdegree] = np.array(eachnn_degree).mean()
+
+            elif target == "item":# for item
+                nn_degree = analysis_data.transpose().toarray()[0].tolist()
+                degree = np.asarray(self.ui_matrix.sum(1).transpose())[0].tolist()
+                for index in np.arange(self.itemnum):
+                    try:
+                        degree_nndegree[degree[index]].append(nn_degree[index])
+                    except:
+                        degree_nndegree[degree[index]] = [nn_degree[index]]
+                for eachdegree, eachnn_degree in degree_nndegree.iteritems():
+                    degree_nndegree[eachdegree] = np.array(eachnn_degree).mean()
+            else:
+                print "target arg error !"
+                sys.exit()
+            degree_nndegree = dict(sorted(degree_nndegree.iteritems(),\
+                    key=lambda d:d[0],reverse = False))
+            x = degree_nndegree.keys()
+            y = degree_nndegree.values()
+            plt.xlabel("degree(%s)"%target)
+            plt.ylabel("nearest neighbors' degree")
+            plt.title("nearest neighbors' degree-degree distribution")
+
         else:
             print "data_type arg error !"
             sys.exit()
         # print analysis_data
         plt.plot(x, y, "g-",linestyle="-")
+        if save == "on":
+            try:
+                plt.savefig(filepath+"%s_%s.png"%(data_type, target))
+            except Exception, e:
+                print e
+        elif save == "off":
+            pass
+        else:
+            print "save arg error !"
         plt.show()
 
     def store_data(self, data, filepath):
@@ -355,14 +452,29 @@ class DataAnalysis(object):
         return data
 
 if __name__ == '__main__':
-    t0 = time.clock()
     data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt")
-    similarity = data_analysis.creat_sim_matrix("item", "online")
-    # col_sim = data_analysis.col_sim_analysis(similarity, "user", "online")
-    # nndegree = data_analysis.nearest_neighbor_degree_analysis(0, 1)
-    # dd = data_analysis.degree_analysis(0, 1)
+    
+    t0 = time.clock()
+    similarity = data_analysis.creat_sim_matrix("user", "offline")
     t1 = time.clock()
+    print "creat_sim_matrix time costs"
     print t1-t0
-    # data_analysis.draw_graph(dd, "degree_distribution", "user")
-    # data_analysis.draw_graph(col_sim, "col_sim", "user")
+
+    # t0 = time.clock()
+    # dd = data_analysis.degree_analysis("user", "online")
+    # t1 = time.clock()
+    # print "degree_analysis time costs"
+    # print t1-t0
+
+    t0 = time.clock()
+    col_sim = data_analysis.col_sim_analysis(similarity, "item", "online")
+    t1 = time.clock()
+    print "col_sim_analysis time costs"
+    print t1-t0
+    # t0 = time.clock()
+    # nndegree = data_analysis.nearest_neighbor_degree_analysis("user", "online")
+    # t1 = time.clock()
+    # print "nearest_neighbor_degree_analysis time costs"
+    # print t1-t0
+    # data_analysis.draw_graph(col_sim, "col_sim", "user", "on")
 
