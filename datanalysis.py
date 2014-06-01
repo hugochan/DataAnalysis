@@ -92,56 +92,69 @@ class DataAnalysis(object):
         """
         filepath = "./offline_results/similarity"
         if method == "online":# online calculation
-            tinynum = 0.00000001
             if target == "user":# for user done
                 self.ui_matrix = self.ui_matrix.tocsc()
-                intersection = (self.ui_matrix.transpose()).dot(self.ui_matrix)
-                unionsection = sparse.lil_matrix((self.usernum, self.usernum))# perfect for fancy indexing
-                for u in np.arange(self.usernum):
-                    # may be improved !
-                    times = int(log(self.usernum-u, 2))
-                    temp = self.ui_matrix[:, u]
-                    for each in np.arange(times):
-                        temp = sparse.hstack([temp, temp])
-                    temp = temp.tocsc()
-                    if self.usernum-u-2**times > 0:
-                        temp = sparse.hstack([temp, temp[:,:self.usernum-u-2**times]])
-                    # sum subtracts intersection equals to unionsection, then plus a tiny num to avoid zero division
-                    unionsection[u, u:] = (temp + self.ui_matrix[:, u:]).sum(0)\
-                        - intersection[u, u:] + sparse.csc_matrix(np.ones([1, self.usernum-u]))*tinynum#np.ones([self.usernum-u, ])*tinynum
+                
+                times = int(log(self.usernum, 2))
+                unionsection = sparse.coo_matrix(self.ui_matrix.sum(0))
+                for each in np.arange(times):
+                    unionsection = sparse.vstack([unionsection, unionsection])
                 unionsection = unionsection.tocsc()
-                unionsection = unionsection + unionsection.transpose()# to make a full matrix using symmetry
+                if self.usernum-2**times > 0:
+                    unionsection = sparse.vstack([unionsection, unionsection[:self.usernum-2**times, :]])
+                unionsection = unionsection.tocsc()
+
+                intersection = (self.ui_matrix.transpose()).dot(self.ui_matrix)
+                # sum subtracts intersection equals to unionsection,
+                # no worry about zero-zero division for sparse matrix
+                unionsection = unionsection + unionsection.transpose() - intersection
+                
+                # transfer to a upper angle matrix: demanding!!
+                # intersection = intersection.tolil()
+                # for c in np.arange(self.usernum):
+                #         intersection[c, :c] = 0
+                # intersection = intersection.tocsc()
+                
                 similarity = intersection/unionsection
-                similarity.setdiag(np.ones([self.usernum, ]).tolist())
+
             elif target == "item":# for item
+                pdb.set_trace()
                 self.ui_matrix = self.ui_matrix.tocsr()
-                intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
-                unionsection = sparse.lil_matrix((self.itemnum, self.itemnum))
-                for o in np.arange(self.itemnum):
-                    # may be improved !
-                    times = int(log(self.itemnum-o, 2))
-                    temp = self.ui_matrix[o, :]
-                    for each in np.arange(times):
-                        temp = sparse.vstack([temp, temp])
-                    temp = temp.tocsr()
-                    if self.itemnum-o-2**times > 0:
-                        temp = sparse.vstack([temp, temp[:self.itemnum-o-2**times, :]])
-                    unionsection[o:, o] = (temp + self.ui_matrix[o:, :]).sum(1)\
-                        - intersection[o:, o] + sparse.csr_matrix(np.ones([self.itemnum-o, 1]))*tinynum
+                
+                times = int(log(self.itemnum, 2))
+                unionsection = sparse.coo_matrix(self.ui_matrix.sum(1))
+                for each in np.arange(times):
+                    unionsection = sparse.hstack([unionsection, unionsection])
                 unionsection = unionsection.tocsr()
-                unionsection = unionsection + unionsection.transpose()
+                if self.itemnum-2**times > 0:
+                    unionsection = sparse.hstack([unionsection, unionsection[:, :self.itemnum-2**times]])
+                unionsection = unionsection.tocsr()
+
+                intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
+                # sum subtracts intersection equals to unionsection,
+                # no worry about zero-zero division for sparse matrix
+                unionsection = unionsection + unionsection.transpose() - intersection# unionsection
+                
+                # transfer to a upper angle matrix: demanding!!
+                # intersection = intersection.tolil()
+                # for r in np.arange(self.itemnum):
+                #         intersection[r, :r] = 0
+                # intersection = intersection.tocsr()
+                
                 similarity = intersection/unionsection
-                similarity.setdiag(np.ones([self.itemnum, ]).tolist())
+
             else:
                 print "target arg error !"
                 sys.exit()
-            if target == "user" or target == "item":
-                try:
-                    io.mmwrite(filepath+"_%s"%target, similarity)
-                except Exception,e:
-                    print e
-                    sys.exit()
-                return similarity
+
+            # similarity = ((similarity/threshold_similarity).astype('int8').astype('float64'))\
+            #         *threshold_similarity# rounding
+            try:
+                io.mmwrite(filepath+"_%s"%target, similarity)
+            except Exception,e:
+                print e
+                sys.exit()
+            return similarity
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
                 try:
@@ -209,6 +222,7 @@ class DataAnalysis(object):
         target = 0 means collaborative similarity for users, target = 1 means collaborative similarity for items.
         method = 'online' means online calculation, method = 'offline' means using offline results.
         """
+        filepath = "./offline_results/col_sim"
         if method == "online":# online calculation
             if target == "user":# for user
                 col_sim = sparse.lil_matrix((1, self.usernum))
@@ -216,7 +230,7 @@ class DataAnalysis(object):
                 degree = self.ui_matrix.sum(0)
                 for u in np.arange(self.usernum):
                     # construct a similarity filtering matrix??????????????
-                    if degree[0, u] != 0:
+                    if degree[0, u] > 1:
                         times = int(log(self.itemnum, 2))
                         temp = self.ui_matrix[:, u]
                         for each in np.arange(times):
@@ -227,7 +241,7 @@ class DataAnalysis(object):
                         
                         temp = temp.tocsc()
                         similarity = similarity.tocsc()
-                        similarity = temp*(temp.transpose())*similarity
+                        similarity = (temp.multiply(temp.transpose())).multiply(similarity)
 
                         temp = degree[0, u]*(degree[0, u] - 1)
                         if temp == 0:
@@ -240,47 +254,46 @@ class DataAnalysis(object):
                 col_sim = sparse.lil_matrix((self.itemnum, 1))
                 self.ui_matrix = self.ui_matrix.tocsr()
                 degree = self.ui_matrix.sum(1)
-                pdb.set_trace()
                 for o in np.arange(self.itemnum):
-                    if degree[o, 0] != 0:
-                        times = int(log(self.usernum, 2))
-                        temp = self.ui_matrix[o, :]
-                        for each in np.arange(times):
-                            temp = sparse.vstack([temp, temp])
-                        temp = temp.tocsr()
-                        if self.usernum-2**times > 0:
-                            temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]])
+                    if degree[o, 0] > 1:
+                        pass
+                        # times = int(log(self.usernum, 2))
+                        # temp = self.ui_matrix[o, :]
+                        # for each in np.arange(times):
+                        #     temp = sparse.vstack([temp, temp])
+                        # temp = temp.tocsr()
+                        # if self.usernum-2**times > 0:
+                        #     temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]])
 
-                        temp = temp.tocsr()
-                        similarity = similarity.tocsr()
-                        similarity = temp*(temp.transpose())*similarity
+                        # temp = temp.tocsr()
+                        # similarity = similarity.tocsr()
+                        # similarity = (temp.multiply(temp.transpose())).multiply(similarity)
 
-                        temp = degree[o, 0]*(degree[o, 0] - 1)
-                        if temp == 0:
-                            temp = 1
-                        col_sim[o, 0] = (similarity.sum()-similarity.diagonal().sum())/temp
+                        # temp = degree[o, 0]*(degree[o, 0] - 1)
+                        # if temp == 0:
+                        #     temp = 1
+                        # col_sim[o, 0] = (similarity.sum()-similarity.diagonal().sum())/temp
                     else:
                         col_sim[o, 0] = 0
             else:
                 print "target arg error !"
                 sys.exit()
-            if target == "user" or target == "item":
-                self.store_data(json.dumps(col_sim.tolist(), ensure_ascii=False),\
-                    "./offline_results/col_sim_%s.data"%target)
-                return col_sim
+            
+            try:
+                io.mmwrite(filepath+"_%s"%target, col_sim)
+            except Exception, e:
+                print e
+                pdb.set_trace()
+                sys.exit()
+            return col_sim
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
-                col_sim = self.read_data("./offline_results/col_sim_%s.data"%target)
-                if col_sim != "":
-                    try:
-                        col_sim = json.loads(col_sim)
-                    except Exception, e:
-                        print e
-                        sys.exit()
-                    col_sim = np.array(col_sim)
-                    return col_sim
-                else:
+                try:
+                    col_sim = io.mmread(filepath+"_%s"%target)
+                except Exception, e:
+                    print e
                     sys.exit()
+                return col_sim
             else:
                 print "target arg error !"
                 sys.exit()
@@ -348,32 +361,32 @@ class DataAnalysis(object):
         elif data_type == "col_sim":# collaborative similarity
             degree_col_sim = {}
             if target == "user":# for user
-                degree = self.ui_matrix.sum(0).tolist()
-                for eachdegree in set(degree):
-                    count = degree.count(eachdegree)
-                    index = -1
-                    temp = 0.0
-                    for i in np.arange(count):
-                        index2 = degree[index+1:].index(eachdegree)
-                        temp += analysis_data[index+1+index2]
-                        index = index + 1 + index2
-                    # pdb.set_trace()
-                    degree_col_sim[eachdegree] = temp/count
+                col_sim = analysis_data.toarray()[0].tolist()
+                degree = np.asarray(self.ui_matrix.sum(0))[0].tolist()
+                for index in np.arange(self.usernum):
+                    try:
+                        degree_col_sim[degree[index]].append(col_sim[index])
+                    except:
+                        degree_col_sim[degree[index]] = [col_sim[index]]
+                for eachdegree, eachcol_sim in degree_col_sim.iteritems():
+                    degree_col_sim[eachdegree] = np.array(eachcol_sim).mean()
+
             elif target == "item":# for item
-                degree = self.ui_matrix.sum(1).tolist()
-                for eachdegree in set(degree):
-                    count = degree.count(eachdegree)
-                    index = -1
-                    temp = 0.0
-                    for i in np.arange(count):
-                        index2 = degree[index+1:].index(eachdegree)
-                        temp += analysis_data[index+1+index2]
-                        index = index + 1 + index2
-                    # pdb.set_trace()
-                    degree_col_sim[eachdegree] = temp/count
+                col_sim = analysis_data.transpose().toarray()[0].tolist()
+                degree = np.asarray(self.ui_matrix.sum(1).transpose())[0].tolist()
+                for index in np.arange(self.itemnum):
+                    try:
+                        degree_col_sim[degree[index]].append(col_sim[index])
+                    except:
+                        degree_col_sim[degree[index]] = [col_sim[index]]
+                for eachdegree, eachcol_sim in degree_col_sim.iteritems():
+                    degree_col_sim[eachdegree] = np.array(eachcol_sim).mean()
+
             else:
                 print "target arg error !"
                 sys.exit()
+            degree_col_sim = dict(sorted(degree_col_sim.iteritems(),\
+                    key=lambda d:d[0],reverse = False))
             x = degree_col_sim.keys()
             y = degree_col_sim.values()
             plt.xlabel("degree(%s)"%target)
@@ -455,7 +468,7 @@ if __name__ == '__main__':
     data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt")
     
     t0 = time.clock()
-    similarity = data_analysis.creat_sim_matrix("user", "offline")
+    similarity = data_analysis.creat_sim_matrix("item", "online")
     t1 = time.clock()
     print "creat_sim_matrix time costs"
     print t1-t0
@@ -466,15 +479,16 @@ if __name__ == '__main__':
     # print "degree_analysis time costs"
     # print t1-t0
 
-    t0 = time.clock()
-    col_sim = data_analysis.col_sim_analysis(similarity, "item", "online")
-    t1 = time.clock()
-    print "col_sim_analysis time costs"
-    print t1-t0
     # t0 = time.clock()
+    # col_sim = data_analysis.col_sim_analysis(similarity, "item", "online")
+    # t1 = time.clock()
+    # print "col_sim_analysis time costs"
+    # print t1-t0
+    # t0 = time.clock()
+
     # nndegree = data_analysis.nearest_neighbor_degree_analysis("user", "online")
     # t1 = time.clock()
     # print "nearest_neighbor_degree_analysis time costs"
     # print t1-t0
-    # data_analysis.draw_graph(col_sim, "col_sim", "user", "on")
+    # data_analysis.draw_graph(col_sim, "col_sim", "item", "on")
 
