@@ -96,52 +96,35 @@ class DataAnalysis(object):
                 self.ui_matrix = self.ui_matrix.tocsc()
                 
                 times = int(log(self.usernum, 2))
-                unionsection = sparse.coo_matrix(self.ui_matrix.sum(0))
+                unionsection = self.ui_matrix.sum(0)
                 for each in np.arange(times):
-                    unionsection = sparse.vstack([unionsection, unionsection])
-                unionsection = unionsection.tocsc()
+                    unionsection = sparse.vstack([unionsection, unionsection], "csc")
                 if self.usernum-2**times > 0:
-                    unionsection = sparse.vstack([unionsection, unionsection[:self.usernum-2**times, :]])
-                unionsection = unionsection.tocsc()
+                    unionsection = sparse.vstack([unionsection, unionsection[:self.usernum-2**times, :]], "csc")
 
                 intersection = (self.ui_matrix.transpose()).dot(self.ui_matrix)
                 # sum subtracts intersection equals to unionsection,
                 # no worry about zero-zero division for sparse matrix
                 unionsection = unionsection + unionsection.transpose() - intersection
-                
-                # transfer to a upper angle matrix: demanding!!
-                # intersection = intersection.tolil()
-                # for c in np.arange(self.usernum):
-                #         intersection[c, :c] = 0
-                # intersection = intersection.tocsc()
-                
-                similarity = intersection/unionsection
+                similarity = sparse.triu(intersection/unionsection, format="lil")# upper triangular matrix
+
 
             elif target == "item":# for item
                 pdb.set_trace()
                 self.ui_matrix = self.ui_matrix.tocsr()
                 
                 times = int(log(self.itemnum, 2))
-                unionsection = sparse.coo_matrix(self.ui_matrix.sum(1))
+                unionsection = self.ui_matrix.sum(1)
                 for each in np.arange(times):
-                    unionsection = sparse.hstack([unionsection, unionsection])
-                unionsection = unionsection.tocsr()
+                    unionsection = sparse.hstack([unionsection, unionsection], "csr")
                 if self.itemnum-2**times > 0:
-                    unionsection = sparse.hstack([unionsection, unionsection[:, :self.itemnum-2**times]])
-                unionsection = unionsection.tocsr()
+                    unionsection = sparse.hstack([unionsection, unionsection[:, :self.itemnum-2**times]], "csr")
 
                 intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
                 # sum subtracts intersection equals to unionsection,
                 # no worry about zero-zero division for sparse matrix
-                unionsection = unionsection + unionsection.transpose() - intersection# unionsection
-                
-                # transfer to a upper angle matrix: demanding!!
-                # intersection = intersection.tolil()
-                # for r in np.arange(self.itemnum):
-                #         intersection[r, :r] = 0
-                # intersection = intersection.tocsr()
-                
-                similarity = intersection/unionsection
+                unionsection = unionsection + unionsection.transpose() - intersection
+                similarity = sparse.triu(intersection/unionsection, format="lil")
 
             else:
                 print "target arg error !"
@@ -234,19 +217,17 @@ class DataAnalysis(object):
                         times = int(log(self.itemnum, 2))
                         temp = self.ui_matrix[:, u]
                         for each in np.arange(times):
-                            temp = sparse.hstack([temp, temp])
-                        temp = temp.tocsc()
+                            temp = sparse.hstack([temp, temp], "csc")
                         if self.itemnum-2**times > 0:
-                            temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]])
+                            temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]], "csc")
                         
-                        temp = temp.tocsc()
                         similarity = similarity.tocsc()
                         similarity = (temp.multiply(temp.transpose())).multiply(similarity)
 
                         temp = degree[0, u]*(degree[0, u] - 1)
                         if temp == 0:
                             temp = 1
-                        col_sim[0, u] = (similarity.sum()-similarity.diagonal().sum())/temp
+                        col_sim[0, u] = 2*(similarity.sum()-similarity.diagonal().sum())/temp
                     else:
                         col_sim[0, u] = 0
 
@@ -260,19 +241,17 @@ class DataAnalysis(object):
                         # times = int(log(self.usernum, 2))
                         # temp = self.ui_matrix[o, :]
                         # for each in np.arange(times):
-                        #     temp = sparse.vstack([temp, temp])
-                        # temp = temp.tocsr()
+                        #     temp = sparse.vstack([temp, temp], "csr")
                         # if self.usernum-2**times > 0:
-                        #     temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]])
+                        #     temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]], "csr")
 
-                        # temp = temp.tocsr()
                         # similarity = similarity.tocsr()
                         # similarity = (temp.multiply(temp.transpose())).multiply(similarity)
 
                         # temp = degree[o, 0]*(degree[o, 0] - 1)
                         # if temp == 0:
                         #     temp = 1
-                        # col_sim[o, 0] = (similarity.sum()-similarity.diagonal().sum())/temp
+                        # col_sim[o, 0] = 2*(similarity.sum()-similarity.diagonal().sum())/temp
                     else:
                         col_sim[o, 0] = 0
             else:
