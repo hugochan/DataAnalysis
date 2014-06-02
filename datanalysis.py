@@ -91,40 +91,134 @@ class DataAnalysis(object):
         method = 'online' means online calculation, method = 'offline' means using offline results.
         """
         filepath = "./offline_results/similarity"
-        if method == "online":# online calculation
-            if target == "user":# for user done
-                self.ui_matrix = self.ui_matrix.tocsc()
-                
+        if method == "online":
+            if target == "user":
+                self.ui_matrix = self.ui_matrix.tocsr()
                 times = int(log(self.usernum, 2))
-                unionsection = self.ui_matrix.sum(0)
+                unionsection = sparse.csr_matrix(self.ui_matrix.sum(0))
                 for each in np.arange(times):
-                    unionsection = sparse.vstack([unionsection, unionsection], "csc")
+                    unionsection = sparse.vstack([unionsection, unionsection], "csr")
                 if self.usernum-2**times > 0:
-                    unionsection = sparse.vstack([unionsection, unionsection[:self.usernum-2**times, :]], "csc")
-
+                    unionsection = sparse.vstack([unionsection, unionsection[:self.usernum-2**times, :]], "csr")
                 intersection = (self.ui_matrix.transpose()).dot(self.ui_matrix)
                 # sum subtracts intersection equals to unionsection,
                 # no worry about zero-zero division for sparse matrix
                 unionsection = unionsection + unionsection.transpose() - intersection
-                similarity = sparse.triu(intersection/unionsection, format="lil")# upper triangular matrix
+                intersection = sparse.triu(intersection, format="csr")
+                similarity = intersection/unionsection
 
-
-            elif target == "item":# for item
-                pdb.set_trace()
-                self.ui_matrix = self.ui_matrix.tocsr()
-                
-                times = int(log(self.itemnum, 2))
-                unionsection = self.ui_matrix.sum(1)
-                for each in np.arange(times):
-                    unionsection = sparse.hstack([unionsection, unionsection], "csr")
-                if self.itemnum-2**times > 0:
-                    unionsection = sparse.hstack([unionsection, unionsection[:, :self.itemnum-2**times]], "csr")
-
+            elif target == "item":
+                # pdb.set_trace()
+                self.ui_matrix = self.ui_matrix.tocsc()
                 intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
-                # sum subtracts intersection equals to unionsection,
-                # no worry about zero-zero division for sparse matrix
-                unionsection = unionsection + unionsection.transpose() - intersection
-                similarity = sparse.triu(intersection/unionsection, format="lil")
+                similarity = sparse.lil_matrix((self.itemnum, self.itemnum))
+
+                block_length = 7000
+                block_num = int(self.itemnum/block_length)
+                block_length_left = self.itemnum - block_num*block_length
+                
+                for row in np.arange(block_num):
+                    times = int(log(block_length, 2))
+                    unionsection_row = sparse.csc_matrix(self.ui_matrix.sum(1)[row*block_length:(row+1)*block_length, 0])
+                    for each in np.arange(times):
+                        unionsection_row = sparse.hstack([unionsection_row, unionsection_row], "csc")
+                    if block_length-2**times > 0:
+                        unionsection_row = sparse.hstack([unionsection_row, unionsection_row[:, :block_length-2**times]], "csc")
+                    
+                    for col in np.arange(row, block_num):
+                        times = int(log(block_length, 2))
+                        unionsection_col = sparse.csc_matrix(self.ui_matrix.sum(1)[col*block_length:(col+1)*block_length, 0])
+                        for each in np.arange(times):
+                            unionsection_col = sparse.hstack([unionsection_col, unionsection_col], "csc")
+                        if block_length-2**times > 0:
+                            unionsection_col = sparse.hstack([unionsection_col, unionsection_col[:, :block_length-2**times]], "csc")
+                        
+                        similarity[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length] = \
+                            intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]/\
+                            (unionsection_row + unionsection_col.transpose() \
+                            - intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length])
+                    
+                    if block_length_left != 0:
+                        times = int(log(block_length, 2))
+                        unionsection_col = sparse.csc_matrix(self.ui_matrix.sum(1)[self.itemnum-block_length_left:, 0])
+                        for each in np.arange(times):
+                            unionsection_col = sparse.hstack([unionsection_col, unionsection_col], "csc")
+                        if block_length-2**times > 0:
+                            unionsection_col = sparse.hstack([unionsection_col, unionsection_col[:, :block_length-2**times]], "csc")
+
+                        similarity[row*block_length:(row+1)*block_length, self.itemnum-block_length_left:] = \
+                            intersection[row*block_length:(row+1)*block_length, self.itemnum-block_length_left:]/\
+                            (unionsection_row[:, :block_length_left] + unionsection_col.transpose() \
+                            - intersection[row*block_length:(row+1)*block_length, self.itemnum-block_length_left:])
+                    print "one row done!"
+
+                if block_length_left != 0:
+                    times = int(log(block_length_left, 2))
+                    unionsection_row = sparse.csc_matrix(self.ui_matrix.sum(1)[self.itemnum-block_length_left:, 0])
+                    for each in np.arange(times):
+                        unionsection_row = sparse.hstack([unionsection_row, unionsection_row], "csc")
+                    if block_length_left-2**times > 0:
+                        unionsection_row = sparse.hstack([unionsection_row, unionsection_row[:, :block_length_left-2**times]], "csc")
+                    
+                    similarity[self.itemnum-block_length_left:, self.itemnum-block_length_left:] = \
+                            intersection[self.itemnum-block_length_left:, self.itemnum-block_length_left:]/\
+                            (unionsection_row + unionsection_row.transpose() \
+                            - intersection[self.itemnum-block_length_left:, self.itemnum-block_length_left:])
+
+
+                # block_length = 512
+                # block_num = int(self.itemnum/block_length)
+                # block_length_left = self.itemnum - block_num*block_length
+                # times = int(log(block_length, 2))
+                # unionsection = sparse.lil_matrix(self.ui_matrix.sum(1))
+                # for each in np.arange(times):
+                #     unionsection = sparse.hstack([unionsection, unionsection], "lil")
+                # if block_length-2**times > 0:
+                #     unionsection = sparse.hstack([unionsection, unionsection[:, :block_length-2**times]], "lil")
+
+                # if block_length_left == 0: 
+                #     for col in np.arange(block_num):
+                #         for row in np.arange(col, block_num):
+                #             temp = unionsection[row*block_length:(row+1)*block_length, :block_length]# to be improved
+                #             temp = unionsection[col*block_length:(col+1)*block_length, :block_length].transpose()\
+                #                 + temp - intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]
+                #             similarity[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length] = \
+                #                 intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]/temp
+                # if block_length_left > 0:                           
+                #     for col in np.arange(block_num):
+                #         for row in np.arange(col, block_num):
+                #             temp = unionsection[row*block_length:(row+1)*block_length, :block_length]# to be improved
+                #             temp = unionsection[col*block_length:(col+1)*block_length, :block_length].transpose()\
+                #                 + temp - intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]
+                #             similarity[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length] = \
+                #                 intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]/temp
+
+                #         temp = unionsection[self.itemnum-block_length_left:, :block_length]
+                #         temp = unionsection[col*block_length:(col+1)*block_length, :block_length_left].transpose()\
+                #             + temp - intersection[self.itemnum-block_length_left:, col*block_length:(col+1)*block_length]
+                #         similarity[self.itemnum-block_length_left:, col*block_length:(col+1)*block_length] = \
+                #             intersection[self.itemnum-block_length_left:, col*block_length:(col+1)*block_length]/temp
+
+                #     temp = unionsection[self.itemnum-block_length_left:, :block_length]
+                #     temp = unionsection[self.itemnum-block_length_left:, :block_length].transpose()\
+                #         + temp - intersection[self.itemnum-block_length_left:, self.itemnum-block_length_left:]
+                #     similarity[self.itemnum-block_length_left:, self.itemnum-block_length_left:] = \
+                #         intersection[self.itemnum-block_length_left:, self.itemnum-block_length_left:]/temp
+                
+                # similarity = sparse.triu(similarity, format="lil")
+
+                # times = int(log(self.itemnum, 2))
+                # unionsection = sparse.csr_matrix(self.ui_matrix.sum(1))
+                # for each in np.arange(times):
+                #     unionsection = sparse.hstack([unionsection, unionsection], "csr")
+                # if self.itemnum-2**times > 0:
+                #     unionsection = sparse.hstack([unionsection, unionsection[:, :self.itemnum-2**times]], "csr")
+
+                # intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
+                # # sum subtracts intersection equals to unionsection,
+                # # no worry about zero-zero division for sparse matrix
+                # unionsection = unionsection + unionsection.transpose() - intersection
+                # similarity = sparse.triu(intersection/unionsection, format="lil")
 
             else:
                 print "target arg error !"
@@ -208,50 +302,77 @@ class DataAnalysis(object):
         filepath = "./offline_results/col_sim"
         if method == "online":# online calculation
             if target == "user":# for user
-                col_sim = sparse.lil_matrix((1, self.usernum))
-                self.ui_matrix = self.ui_matrix.tocsc()# fast column slicing operations
+                col_sim = sparse.csc_matrix((1, self.usernum))
+                self.ui_matrix = self.ui_matrix.tolil()
                 degree = self.ui_matrix.sum(0)
                 for u in np.arange(self.usernum):
                     # construct a similarity filtering matrix??????????????
                     if degree[0, u] > 1:
-                        times = int(log(self.itemnum, 2))
-                        temp = self.ui_matrix[:, u]
-                        for each in np.arange(times):
-                            temp = sparse.hstack([temp, temp], "csc")
-                        if self.itemnum-2**times > 0:
-                            temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]], "csc")
-                        
-                        similarity = similarity.tocsc()
-                        similarity = (temp.multiply(temp.transpose())).multiply(similarity)
+                        if degree[0, u] > 1500:
+                            times = int(log(self.itemnum, 2))
+                            temp = self.ui_matrix[:, u]
+                            for each in np.arange(times):
+                                temp = sparse.hstack([temp, temp], "csc")
+                            if self.itemnum-2**times > 0:
+                                temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]], "csc")
+                            
+                            similarity = similarity.tocsc()
+                            similarity = (temp.multiply(temp.transpose())).multiply(similarity)
 
-                        temp = degree[0, u]*(degree[0, u] - 1)
-                        if temp == 0:
-                            temp = 1
-                        col_sim[0, u] = 2*(similarity.sum()-similarity.diagonal().sum())/temp
+                            temp = degree[0, u]*(degree[0, u] - 1)
+                            if temp == 0:
+                                temp = 1
+                            col_sim[0, u] = 2*(similarity.sum()-similarity.diagonal().sum())/temp
+                        else:
+                            try:
+                                collected_item_list = self.ui_matrix[:, u].transpose().rows[0]
+                            except Exception, e:
+                                print e
+                            collected_item_num = len(collected_item_list)
+                            each_col_sim = 0
+                            for oi in np.arange(collected_item_num):
+                                for oj in np.arange(oi+1, collected_item_num):
+                                    each_col_sim += similarity[collected_item_list[oi], collected_item_list[oj]]
+                            each_col_sim = each_col_sim/(collected_item_num*(collected_item_num-1)/2)
+                            col_sim[0, u] = each_col_sim
+
                     else:
                         col_sim[0, u] = 0
 
             elif target == "item":# for item
                 col_sim = sparse.lil_matrix((self.itemnum, 1))
-                self.ui_matrix = self.ui_matrix.tocsr()
+                self.ui_matrix = self.ui_matrix.tolil()
                 degree = self.ui_matrix.sum(1)
+                similarity = similarity.tolil()
+                pdb.set_trace()
                 for o in np.arange(self.itemnum):
                     if degree[o, 0] > 1:
-                        pass
-                        # times = int(log(self.usernum, 2))
-                        # temp = self.ui_matrix[o, :]
-                        # for each in np.arange(times):
-                        #     temp = sparse.vstack([temp, temp], "csr")
-                        # if self.usernum-2**times > 0:
-                        #     temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]], "csr")
+                        if degree[o, 0] > 1500:
+                            times = int(log(self.usernum, 2))
+                            temp = self.ui_matrix[o, :]
+                            for each in np.arange(times):
+                                temp = sparse.vstack([temp, temp], "csr")
+                            if self.usernum-2**times > 0:
+                                temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]], "csr")
 
-                        # similarity = similarity.tocsr()
-                        # similarity = (temp.multiply(temp.transpose())).multiply(similarity)
+                            similarity = (temp.multiply(temp.transpose())).multiply(similarity)
 
-                        # temp = degree[o, 0]*(degree[o, 0] - 1)
-                        # if temp == 0:
-                        #     temp = 1
-                        # col_sim[o, 0] = 2*(similarity.sum()-similarity.diagonal().sum())/temp
+                            temp = degree[o, 0]*(degree[o, 0] - 1)
+                            if temp == 0:
+                                temp = 1
+                            col_sim[o, 0] = 2*(similarity.sum()-similarity.diagonal().sum())/temp
+                        else:
+                            try:
+                                collected_user_list = self.ui_matrix[o, :].rows[0]
+                            except Exception, e:
+                                print e
+                            collected_user_num = len(collected_user_list)
+                            each_col_sim = 0
+                            for ui in np.arange(collected_user_num):
+                                for uj in np.arange(ui+1, collected_user_num):
+                                    each_col_sim += similarity[collected_user_list[ui], collected_user_list[uj]]
+                            each_col_sim = each_col_sim/(collected_user_num*(collected_user_num-1)/2)
+                            col_sim[o, 0] = each_col_sim
                     else:
                         col_sim[o, 0] = 0
             else:
@@ -447,7 +568,7 @@ if __name__ == '__main__':
     data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt")
     
     t0 = time.clock()
-    similarity = data_analysis.creat_sim_matrix("item", "online")
+    similarity = data_analysis.creat_sim_matrix("user", "offline")
     t1 = time.clock()
     print "creat_sim_matrix time costs"
     print t1-t0
@@ -458,12 +579,12 @@ if __name__ == '__main__':
     # print "degree_analysis time costs"
     # print t1-t0
 
-    # t0 = time.clock()
-    # col_sim = data_analysis.col_sim_analysis(similarity, "item", "online")
-    # t1 = time.clock()
-    # print "col_sim_analysis time costs"
-    # print t1-t0
-    # t0 = time.clock()
+    t0 = time.clock()
+    col_sim = data_analysis.col_sim_analysis(similarity, "item", "online")
+    t1 = time.clock()
+    print "col_sim_analysis time costs"
+    print t1-t0
+    t0 = time.clock()
 
     # nndegree = data_analysis.nearest_neighbor_degree_analysis("user", "online")
     # t1 = time.clock()
