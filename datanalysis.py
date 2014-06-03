@@ -204,7 +204,8 @@ class DataAnalysis(object):
             # similarity = ((similarity/threshold_similarity).astype('int8').astype('float64'))\
             #         *threshold_similarity# rounding
             try:
-                io.mmwrite(filepath+"_%s"%target, similarity)
+                # io.mmwrite(filepath+"_%s"%target, similarity)
+                io.savemat(filepath+"_%s"%target, {"similarity_%s"%target:similarity}, oned_as='row')
             except Exception,e:
                 print e
                 sys.exit()
@@ -212,7 +213,9 @@ class DataAnalysis(object):
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
                 try:
-                    similarity = io.mmread(filepath+"_%s"%target)
+                    # similarity = io.mmread(filepath+"_%s"%target)
+                    similarity = io.loadmat(filepath+"_%s"%target, mat_dtype=False)["similarity_%s"%target]#precision?
+                    # pdb.set_trace()
                 except Exception, e:
                     print e
                     sys.exit()
@@ -279,78 +282,69 @@ class DataAnalysis(object):
         filepath = "./offline_results/col_sim"
         if method == "online":# online calculation
             if target == "user":# for user
-                col_sim = sparse.csc_matrix((1, self.usernum))
-                self.ui_matrix = self.ui_matrix.tolil()
+                col_sim = sparse.lil_matrix((1, self.usernum))
+                self.ui_matrix = self.ui_matrix.tocsc()
                 degree = self.ui_matrix.sum(0)
+                similarity = similarity.tolil()
                 for u in np.arange(self.usernum):
-                    # construct a similarity filtering matrix??????????????
                     if degree[0, u] > 1:
-                        if degree[0, u] > 1500:
-                            times = int(log(self.itemnum, 2))
-                            temp = self.ui_matrix[:, u]
-                            for each in np.arange(times):
-                                temp = sparse.hstack([temp, temp], "csc")
-                            if self.itemnum-2**times > 0:
-                                temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]], "csc")
+                        # if degree[0, u] > 1500:
+                        #     # construct a similarity filtering matrix??????????????
+                        #     times = int(log(self.itemnum, 2))
+                        #     temp = self.ui_matrix[:, u]
+                        #     for each in np.arange(times):
+                        #         temp = sparse.hstack([temp, temp], "csc")
+                        #     if self.itemnum-2**times > 0:
+                        #         temp = sparse.hstack([temp, temp[:,:self.itemnum-2**times]], "csc")
                             
-                            similarity_filter = (temp.multiply(temp.transpose())).multiply(similarity)
+                        #     similarity_filter = (temp.multiply(temp.transpose())).multiply(similarity)
 
-                            temp = degree[0, u]*(degree[0, u] - 1)
-                            if temp == 0:
-                                temp = 1
-                            col_sim[0, u] = 2*(similarity_filter.sum()-similarity_filter.diagonal().sum())/temp
-                            similarity_filter = 0
-                        else:
-                            try:
-                                collected_item_list = self.ui_matrix[:, u].transpose().rows[0]
-                            except Exception, e:
-                                print e
-                            collected_item_num = len(collected_item_list)
-                            each_col_sim = 0
-                            for oi in np.arange(collected_item_num):
-                                for oj in np.arange(oi+1, collected_item_num):
-                                    each_col_sim += similarity[collected_item_list[oi], collected_item_list[oj]]
-                            each_col_sim = each_col_sim/(collected_item_num*(collected_item_num-1)/2)
-                            col_sim[0, u] = each_col_sim
-
+                        #     temp = degree[0, u]*(degree[0, u] - 1)
+                        #     if temp == 0:
+                        #         temp = 1
+                        #     col_sim[0, u] = 2*(similarity_filter.sum()-similarity_filter.diagonal().sum())/temp
+                        #     similarity_filter = 0
+                        # else:
+                        collected_item_list = self.ui_matrix[:, u].transpose().tolil().rows[0]
+                        collected_item_num = len(collected_item_list)
+                        each_col_sim = 0
+                        for oi in np.arange(collected_item_num):
+                            for oj in np.arange(oi+1, collected_item_num):
+                                each_col_sim += similarity[collected_item_list[oi], collected_item_list[oj]]
+                        col_sim[0, u] = each_col_sim/(collected_item_num*(collected_item_num-1)/2)
                     else:
                         col_sim[0, u] = 0
 
             elif target == "item":# for item
                 col_sim = sparse.lil_matrix((self.itemnum, 1))
-                self.ui_matrix = self.ui_matrix.tolil()
+                self.ui_matrix = self.ui_matrix.tocsr()
                 degree = self.ui_matrix.sum(1)
                 similarity = similarity.tolil()
-                # pdb.set_trace()
                 for o in np.arange(self.itemnum):
                     if degree[o, 0] > 1:
-                        if degree[o, 0] > 1500:
-                            times = int(log(self.usernum, 2))
-                            temp = self.ui_matrix[o, :]
-                            for each in np.arange(times):
-                                temp = sparse.vstack([temp, temp], "csr")
-                            if self.usernum-2**times > 0:
-                                temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]], "csr")
+                        # if degree[o, 0] > 1500:
+                        #     print "large degree"
+                        #     times = int(log(self.usernum, 2))
+                        #     temp = self.ui_matrix[o, :]
+                        #     for each in np.arange(times):
+                        #         temp = sparse.vstack([temp, temp], "csr")
+                        #     if self.usernum-2**times > 0:
+                        #         temp = sparse.vstack([temp, temp[:self.usernum-2**times, :]], "csr")
 
-                            similarity_filter = (temp.multiply(temp.transpose())).multiply(similarity)
+                        #     similarity_filter = (temp.multiply(temp.transpose())).multiply(similarity)
 
-                            temp = degree[o, 0]*(degree[o, 0] - 1)
-                            if temp == 0:
-                                temp = 1
-                            col_sim[o, 0] = 2*(similarity_filter.sum()-similarity_filter.diagonal().sum())/temp
-                            similarity_filter = 0
-                        else:
-                            try:
-                                collected_user_list = self.ui_matrix[o, :].rows[0]
-                            except Exception, e:
-                                print e
-                            collected_user_num = len(collected_user_list)
-                            each_col_sim = 0
-                            for ui in np.arange(collected_user_num):
-                                for uj in np.arange(ui+1, collected_user_num):
-                                    each_col_sim += similarity[collected_user_list[ui], collected_user_list[uj]]
-                            each_col_sim = each_col_sim/(collected_user_num*(collected_user_num-1)/2)
-                            col_sim[o, 0] = each_col_sim
+                        #     temp = degree[o, 0]*(degree[o, 0] - 1)
+                        #     if temp == 0:
+                        #         temp = 1
+                        #     col_sim[o, 0] = 2*(similarity_filter.sum()-similarity_filter.diagonal().sum())/temp
+                        #     similarity_filter = 0
+                        collected_user_list = self.ui_matrix[o, :].tolil().rows[0]
+                        collected_user_num = len(collected_user_list)
+                        each_col_sim = 0
+                        for ui in np.arange(collected_user_num):
+                            for uj in np.arange(ui+1, collected_user_num):
+                                each_col_sim += similarity[collected_user_list[ui], collected_user_list[uj]]
+                        col_sim[o, 0] = each_col_sim/(collected_user_num*(collected_user_num-1)/2)
                     else:
                         col_sim[o, 0] = 0
             else:
@@ -358,7 +352,8 @@ class DataAnalysis(object):
                 sys.exit()
             
             try:
-                io.mmwrite(filepath+"_%s"%target, col_sim)
+                # io.mmwrite(filepath+"_%s"%target, col_sim)
+                io.savemat(filepath+"_%s"%target, {"col_sim_%s"%target:col_sim}, oned_as="row")
             except Exception, e:
                 print e
                 pdb.set_trace()
@@ -367,7 +362,9 @@ class DataAnalysis(object):
         elif method == "offline":# using offline results
             if target == "user" or target == "item":
                 try:
-                    col_sim = io.mmread(filepath+"_%s"%target)
+                    # col_sim = io.mmread(filepath+"_%s"%target)
+                    col_sim = io.loadmat(filepath+"_%s"%target)["col_sim_%s"%target]
+                    # pdb.set_trace()
                 except Exception, e:
                     print e
                     sys.exit()
@@ -393,13 +390,13 @@ class DataAnalysis(object):
             if target == "user":# for user
                 self.ui_matrix = self.ui_matrix.tocsc()
                 degree = sparse.csc_matrix(self.ui_matrix.sum(0))
-                degree = degree + sparse.csc_matrix(np.ones([1, self.usernum]))*tinynum# to avoid zero division
+                # degree = degree + sparse.csc_matrix(np.ones([1, self.usernum]))*tinynum# to avoid zero division
                 nn_degree = sparse.csc_matrix(self.ui_matrix.sum(1).transpose())\
                     .dot(self.ui_matrix)/degree
             elif target == "item":# for item
                 self.ui_matrix = self.ui_matrix.tocsr()
                 degree = sparse.csr_matrix(self.ui_matrix.sum(1))
-                degree = degree + sparse.csr_matrix(np.ones([self.itemnum, 1]))*tinynum# to avoid zero division
+                # degree = degree + sparse.csr_matrix(np.ones([self.itemnum, 1]))*tinynum# to avoid zero division
                 nn_degree = self.ui_matrix.dot(sparse.csr_matrix(self.ui_matrix.sum(0).transpose()))/degree
             else:
                 print "target arg error !"
@@ -432,7 +429,6 @@ class DataAnalysis(object):
         if data_type == "degree_distribution":# degree
             x = analysis_data.keys()
             y = analysis_data.values()
-            print x
             plt.xlabel("degree(%s)"%target)
             plt.ylabel("frequency")
             plt.title("degree distribution")
@@ -463,10 +459,13 @@ class DataAnalysis(object):
             else:
                 print "target arg error !"
                 sys.exit()
-            degree_col_sim = dict(sorted(degree_col_sim.iteritems(),\
-                    key=lambda d:d[0],reverse = False))
-            x = degree_col_sim.keys()
-            y = degree_col_sim.values()
+            # there is something wrong with the method below, thus discards it
+            # degree_col_sim = dict(sorted(degree_col_sim.iteritems(),\
+            #         key=lambda d:d[0],reverse = False))
+            x = sorted(degree_col_sim.keys())
+            y = []
+            for eachkey in x:
+                y.append(degree_col_sim[eachkey]) 
             plt.xlabel("degree(%s)"%target)
             plt.ylabel("collaborative similarity")
             plt.title("collaborative similarity-degree distribution")
@@ -496,10 +495,14 @@ class DataAnalysis(object):
             else:
                 print "target arg error !"
                 sys.exit()
-            degree_nndegree = dict(sorted(degree_nndegree.iteritems(),\
-                    key=lambda d:d[0],reverse = False))
-            x = degree_nndegree.keys()
-            y = degree_nndegree.values()
+            # there is something wrong with the method below, thus discards it
+            # degree_nndegree = dict(sorted(degree_nndegree.iteritems(),\
+                    # key=lambda d:d[0],reverse = False))
+            
+            x = sorted(degree_nndegree.keys())
+            y = []
+            for eachkey in x:
+                y.append(degree_nndegree[eachkey]) 
             plt.xlabel("degree(%s)"%target)
             plt.ylabel("nearest neighbors' degree")
             plt.title("nearest neighbors' degree-degree distribution")
@@ -546,27 +549,29 @@ if __name__ == '__main__':
     data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt")
     
     t0 = time.clock()
-    similarity = data_analysis.creat_sim_matrix("item", "offline")
+    similarity = data_analysis.creat_sim_matrix("user", "offline")
     t1 = time.clock()
     print "creat_sim_matrix time costs"
     print t1-t0
 
     # t0 = time.clock()
-    # dd = data_analysis.degree_analysis("user", "online")
+    # dd = data_analysis.degree_analysis("item", "online")
     # t1 = time.clock()
     # print "degree_analysis time costs"
     # print t1-t0
 
-    # t0 = time.clock()
-    # col_sim = data_analysis.col_sim_analysis(similarity, "item", "online")
-    # t1 = time.clock()
-    # print "col_sim_analysis time costs"
-    # print t1-t0
-    # t0 = time.clock()
+    t0 = time.clock()
+    col_sim = data_analysis.col_sim_analysis(similarity, "item", "offline")
+    t1 = time.clock()
+    print "col_sim_analysis time costs"
+    print t1-t0
 
+    # t0 = time.clock()
     # nndegree = data_analysis.nearest_neighbor_degree_analysis("user", "online")
     # t1 = time.clock()
     # print "nearest_neighbor_degree_analysis time costs"
     # print t1-t0
-    # data_analysis.draw_graph(col_sim, "col_sim", "item", "on")
+    # data_analysis.draw_graph(col_sim, "col_sim", "user", "on")
+    # data_analysis.draw_graph(nndegree, "nn_degree", "user", "on")
+    # data_analysis.draw_graph(dd, "degree_distribution", "item", "on")
 
