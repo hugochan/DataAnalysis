@@ -64,13 +64,15 @@ class DataAnalysis(object):
                     self.ui_matrix[self.itemset[eachitem], user_index] = 1
                 user_index += 1
             try:
-                io.mmwrite(filepath, self.ui_matrix)
+                # io.mmwrite(filepath, self.ui_matrix)
+                io.savemat(filepath, {"ui_matrix":self.ui_matrix}, oned_as='row')
             except Exception, e:
                 print e
                 sys.exit()
         elif method == "offline":
             try:
-                self.ui_matrix = io.mmread(filepath)
+                # self.ui_matrix = io.mmread(filepath)
+                self.ui_matrix = io.loadmat(filepath, mat_dtype=False)["ui_matrix"]
             except Exception,e:
                 print e
                 sys.exit()
@@ -84,7 +86,7 @@ class DataAnalysis(object):
         target = 'user' means similarity among users, target = 'item' means similarity among items.
         method = 'online' means online calculation, method = 'offline' means using offline results.
         """
-        filepath = "./offline_results/similarity"
+        filepath = "./offline_results2/similarity"
         if method == "online":
             if target == "user":
                 self.ui_matrix = self.ui_matrix.tocsr()
@@ -102,6 +104,7 @@ class DataAnalysis(object):
                 similarity = intersection/unionsection
 
             elif target == "item":
+                # pdb.set_trace()
                 self.ui_matrix = self.ui_matrix.tocsc()
                 intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
                 # intersection = sparse.triu(intersection, format="csc")
@@ -109,7 +112,6 @@ class DataAnalysis(object):
                 block_num = int(self.itemnum/block_length)
                 block_length_left = self.itemnum - block_num*block_length
         
-                # pdb.set_trace()
                 
                 for row in np.arange(block_num):
                     times = int(log(block_length, 2))
@@ -127,9 +129,13 @@ class DataAnalysis(object):
                         if block_length-2**times > 0:
                             unionsection_col = sparse.hstack([unionsection_col, unionsection_col[:, :block_length-2**times]], "csc")
                         
-                        temp_col = intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]/\
-                                (unionsection_row + unionsection_col.transpose() \
-                                - intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length])
+                        try:
+                            temp_col = intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length]/\
+                                    (unionsection_row + unionsection_col.transpose() \
+                                    - intersection[row*block_length:(row+1)*block_length, col*block_length:(col+1)*block_length])
+                        except Exception, e:
+                            print e
+                            pdb.set_trace()
 
                         unionsection_col = 0
                         if col == row:
