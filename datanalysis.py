@@ -13,21 +13,15 @@ class DataAnalysis(object):
     """do some data analysis"""
     def __init__(self, filepath):
         super(DataAnalysis, self).__init__()
-        self.__filepath = filepath
+        self._filepath = filepath
         self.userset = []# user set
         self.itemset = {}# item set: {"item":index,...}
-        self.__instanceSet = {}# instance data set: {user:[item,...],...}
+        self.instanceSet = {}# instance data set: {user:[item,...],...}
         self.instancenum = 0# num of instance
-        self._import_data()
-        t0 = time.clock()
-        self._create_ui_matrix("offline")
-        t1 = time.clock()
-        print "create_ui_matrix time costs"
-        print t1-t0
 
-    def _import_data(self):
+    def import_data(self):
         try:
-            with open(self.__filepath, 'r') as f:
+            with open(self._filepath, 'r') as f:
                 temp_itemset = []# item set       
                 templine = f.readline()
                 while(templine):
@@ -37,16 +31,16 @@ class DataAnalysis(object):
                     item = int(temp[1][:-1])
                     temp_itemset.append(item)
                     try:
-                        self.__instanceSet[user].append(item)
+                        self.instanceSet[user].append(item)
                     except:
-                        self.__instanceSet[user] = [item]
+                        self.instanceSet[user] = [item]
                     templine = f.readline()
         except Exception, e:
             print "import datas error !"
             print e
             sys.exit()
         f.close()
-        self.userset = self.__instanceSet.keys()
+        self.userset = self.instanceSet.keys()
         temp_itemset = list(set(temp_itemset))# remove redundancy
         self.usernum = len(self.userset)
         self.itemnum = len(temp_itemset)
@@ -60,14 +54,14 @@ class DataAnalysis(object):
         print "instance num:"
         print self.instancenum
 
-    def _create_ui_matrix(self, method="online"):
+    def create_ui_matrix(self, method="online"):
         filepath = "./offline_results/ui_matrix"
         if method == "online":
             self.ui_matrix = sparse.lil_matrix((self.itemnum, self.usernum))
             user_index = 0
-            for user, item in self.__instanceSet.iteritems():
+            for user, item in self.instanceSet.iteritems():
                 for eachitem in item:
-                    self.ui_matrix[self.itemset[eachitem], user_index] = 1 # index operation is exacting !
+                    self.ui_matrix[self.itemset[eachitem], user_index] = 1
                 user_index += 1
             try:
                 io.mmwrite(filepath, self.ui_matrix)
@@ -85,7 +79,7 @@ class DataAnalysis(object):
             sys.exit()
 
 
-    def creat_sim_matrix(self, target, method="online"):
+    def create_sim_matrix(self, target, block_length, method="online"):
         """Jaccard similarity
         target = 'user' means similarity among users, target = 'item' means similarity among items.
         method = 'online' means online calculation, method = 'offline' means using offline results.
@@ -110,12 +104,12 @@ class DataAnalysis(object):
             elif target == "item":
                 self.ui_matrix = self.ui_matrix.tocsc()
                 intersection = self.ui_matrix.dot(self.ui_matrix.transpose())
-                intersection = sparse.triu(intersection, format="csc")
+                # intersection = sparse.triu(intersection, format="csc")
 
-                block_length = 8000
                 block_num = int(self.itemnum/block_length)
                 block_length_left = self.itemnum - block_num*block_length
         
+                # pdb.set_trace()
                 
                 for row in np.arange(block_num):
                     times = int(log(block_length, 2))
@@ -547,12 +541,18 @@ class DataAnalysis(object):
 
 if __name__ == '__main__':
     data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt")
-    
+    data_analysis.import_data()
     t0 = time.clock()
-    similarity = data_analysis.creat_sim_matrix("user", "offline")
+    data_analysis.create_ui_matrix("online")
     t1 = time.clock()
-    print "creat_sim_matrix time costs"
+    print "create_ui_matrix time costs"
     print t1-t0
+
+    # t0 = time.clock()
+    # similarity = data_analysis.create_sim_matrix("user", "offline")
+    # t1 = time.clock()
+    # print "create_sim_matrix time costs"
+    # print t1-t0
 
     # t0 = time.clock()
     # dd = data_analysis.degree_analysis("item", "online")
@@ -560,11 +560,11 @@ if __name__ == '__main__':
     # print "degree_analysis time costs"
     # print t1-t0
 
-    t0 = time.clock()
-    col_sim = data_analysis.col_sim_analysis(similarity, "item", "offline")
-    t1 = time.clock()
-    print "col_sim_analysis time costs"
-    print t1-t0
+    # t0 = time.clock()
+    # col_sim = data_analysis.col_sim_analysis(similarity, "item", "offline")
+    # t1 = time.clock()
+    # print "col_sim_analysis time costs"
+    # print t1-t0
 
     # t0 = time.clock()
     # nndegree = data_analysis.nearest_neighbor_degree_analysis("user", "online")
