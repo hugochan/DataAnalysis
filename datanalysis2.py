@@ -7,7 +7,7 @@ import numpy as np
 from scipy import sparse
 from scipy import io
 import matplotlib.pyplot as plt
-from matplotlib import cm
+from matplotlib import cm, colors, axes
 # from matplotlib import LinearLocator
 import pdb, time
 from datanalysis import DataAnalysis
@@ -302,10 +302,10 @@ class DataAnalysis2(DataAnalysis):
         degree_userindex = {}
         for each in np.arange(usernum):
             try:
-                degree_time_similarity[degree[each]] += user_interitems_time[user_index[each], :]
+                degree_time_similarity[degree[each]] += user_interitems_time[each, :]
                 degree_userindex[degree[each]].append(user_index[each])
             except:
-                degree_time_similarity[degree[each]] = user_interitems_time[user_index[each], :]
+                degree_time_similarity[degree[each]] = user_interitems_time[each, :]
                 degree_userindex[degree[each]] = [user_index[each]]
 
         for eachdegree in set(degree):
@@ -340,7 +340,7 @@ class DataAnalysis2(DataAnalysis):
             temp = analysis_data[0]
             interitems_baseline = [temp for each in time]
             # temp = analysis_data[1].mean()
-            # user_interitems_baseline = [temp for each in time]# user_interitems
+            user_interitems_baseline = [0.08 for each in time]# user_interitems
 
             plt.xlabel("relative time")
             plt.ylabel("similarity")
@@ -355,7 +355,9 @@ class DataAnalysis2(DataAnalysis):
             max_timespan = analysis_data[2][0].shape[1]
             time = range(max_timespan+1)[1:]
             degree = degree_time_similarity.keys()
-
+            sim = np.array(degree_time_similarity.values())
+            print "degree_len: %s"%len(degree)
+            print "max_timespan: %s"%max_timespan
             # fig = plt.figure()
             # ax = fig.gca(projection='3d')
             # surf = ax.plot_surface(time, degree, , rstride=1, cstride=1, linewidth=0, antialiased=False)
@@ -363,9 +365,57 @@ class DataAnalysis2(DataAnalysis):
             # ax.w_zaxis.set_major_locator(LinearLocator(6))
             # plt.show()
             # cmap = cm.get_cmap("spectral", 1000)
-            # plt.xlabel("relative time")
-            # plt.ylabel("similarity")
-            # plt.title("similarity_time curves")
+
+            # fig, ax = plt.subplots()
+            # cmap = cm.hot
+            # norm = colors.Normalize(vmin=-1, vmax=1)
+
+            # ax.invert_yaxis()
+            # ax.xaxis.tick_top()
+
+            # ax.set_xticklabels(time, minor=False)
+            # ax.set_yticklabels(degree, minor=False)
+            # # put the major ticks at the middle of each cell
+            # # ax.set_xticks(np.arange(sim.shape[0])+0.5, minor=False)
+            # # ax.set_yticks(np.arange(sim.shape[1])+0.5, minor=False)
+            # im = ax.imshow(sim, cmap=cmap)
+            
+            # plt.colorbar(im, cmap=cmap, norm=norm)#, ticks=[-1,0,1])  
+   
+            # pdb.set_trace()
+            # fig, ax = plt.subplots()
+            # heatmap = ax.pcolor(sim, cmap=plt.cm.Blues)
+
+            # # put the major ticks at the middle of each cell
+            # ax.set_xticks(np.arange(sim.shape[0])+0.5, minor=False)
+            # ax.set_yticks(np.arange(sim.shape[1])+0.5, minor=False)
+
+            # # want a more natural, table-like display
+            # ax.invert_yaxis()
+            # ax.xaxis.tick_top()
+
+            # ax.set_xticklabels(time, minor=False)
+            # ax.set_yticklabels(degree, minor=False)
+            # data = np.clip(np.random.randn(5,5),-1,1)
+            # data = np.eye(5)
+            # shape = sim.shape
+            # data = np.zeros([80, 231])
+            # fig = plt.figure()
+            # ax = fig.add_subplot(111)  
+            # cmap = cm.hot #可以使用自定义的colormap  
+            # im = ax.imshow(data, cmap=cmap)  
+            # plt.colorbar(im) 
+            fig = plt.figure(facecolor='w')
+            ax1 = fig.add_subplot(1,1,1, position=[0.1,0.15,0.9,0.8])
+            cmap = cm.get_cmap('spectral', 10000)
+            map = ax1.imshow(sim, interpolation="nearest", cmap=cmap, aspect='auto', vmin=sim.min(), vmax=sim.max())
+            cb = plt.colorbar(mappable=map, cax=None, ax=None, shrink=0.5)
+            cb.set_label('(heat)')
+            
+            plt.xlabel("relative time")
+            plt.ylabel("degree")
+            plt.title("userdegree_time_similarity heatmap")
+
         
         else:
             print "data_type arg error !"
@@ -381,6 +431,7 @@ class DataAnalysis2(DataAnalysis):
             print "save arg error !"
         plt.show()
 
+
 if __name__ == '__main__':
     datanalysis2 = DataAnalysis2(filepath="../../data/fengniao/fengniao_filtering_0604.txt")
     datanalysis2.import_data()
@@ -390,12 +441,12 @@ if __name__ == '__main__':
     # t1 = time.clock()
     # print "create_sim_matrix costs: %ss"%(t1 - t0)
 
-    t0 = time.clock()
-    sampling_ration = 0.0002
-    interitems = datanalysis2.calc_interitems_baseline(similarity=0, sampling_ration=sampling_ration, method="offline")
-    t1 = time.clock()
-    print "sampling_ration: %s"%sampling_ration
-    print "calc_interitems_baseline costs: %ss"%(t1 - t0)
+    # t0 = time.clock()
+    # sampling_ration = 0.0002
+    # interitems = datanalysis2.calc_interitems_baseline(similarity=0, sampling_ration=sampling_ration, method="offline")
+    # t1 = time.clock()
+    # print "sampling_ration: %s"%sampling_ration
+    # print "calc_interitems_baseline costs: %ss"%(t1 - t0)
 
     # t0 = time.clock()
     # sampling_ration = 0.1
@@ -406,10 +457,10 @@ if __name__ == '__main__':
     # pdb.set_trace()
 
     t0 = time.clock()
-    sampling_ration = 0.1
+    sampling_ration = 0.2
     uit = datanalysis2.calc_user_interitems_time(similarity=0, sampling_ration=sampling_ration, method="offline")
     t1 = time.clock()
     print "sampling_ration: %s"%sampling_ration
     print "calc_user_interitems_time costs: %ss"%(t1 - t0)
     
-    datanalysis2.draw_graph(analysis_data=[interitems, 0, uit], data_type="similarity_time", time_type="relative_time", save="on")
+    datanalysis2.draw_graph(analysis_data=[0, 0, uit], data_type="userdegree_time_similarity", time_type="relative_time", save="on")
