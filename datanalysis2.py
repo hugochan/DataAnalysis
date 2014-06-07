@@ -7,6 +7,8 @@ import numpy as np
 from scipy import sparse
 from scipy import io
 import matplotlib.pyplot as plt
+from matplotlib import cm
+# from matplotlib import LinearLocator
 import pdb, time
 from datanalysis import DataAnalysis
 
@@ -41,11 +43,13 @@ class DataAnalysis2(DataAnalysis):
                 print e
                 sys.exit()
             f.close()
-            self.userset = self.instanceSet.keys()
+            temp_userset = self.instanceSet.keys()
             temp_itemset = list(set(self.item_records))# remove redundancy
-            self.usernum = len(self.userset)
+            self.usernum = len(temp_userset)
             self.itemnum = len(temp_itemset)
-            for item_index in np.arange(self.itemnum):
+            for user_index in range(self.usernum):
+                self.userset[temp_userset[user_index]] = user_index
+            for item_index in range(self.itemnum):
                 self.itemset[temp_itemset[item_index]] = item_index
 
             print "user num: %s"%self.usernum
@@ -221,21 +225,21 @@ class DataAnalysis2(DataAnalysis):
         if method == "online":
             if sampling_ration == 1:
                 calc_set =  self.instanceSet.items()
-                max_relative_timespan = sele.get_max_relative_timespan(calc_set)
-                user_interitems_time = sparse.lil_matrix((self.usernum, max_relative_timespan))
-
+                sampling_num = self.usernum
 
             elif sampling_ration > 0 and sampling_ration < 1:
                 sampling_num = int(sampling_ration*self.usernum)
                 print "sampling_num: %s"%sampling_num
                 calc_set =  random.sample(self.instanceSet.items(), sampling_num)
-                max_relative_timespan = sele.get_max_relative_timespan(calc_set)
-                user_interitems_time = sparse.lil_matrix((sampling_num, max_relative_timespan))
 
 
             else:
                 print "sampling_ration arg error !"
                 sys.exit()
+            
+            relative_timespan = self.get_relative_timespan(calc_set)
+            max_relative_timespan = max(relative_timespan.values())
+            user_interitems_time = sparse.lil_matrix((sampling_num, max_relative_timespan))
 
             user_index = 0
             for each_user, each_instance in calc_set:
@@ -247,7 +251,6 @@ class DataAnalysis2(DataAnalysis):
                             timespan = instance_index2 - instance_index1 - 1
                             item1_index = self.itemset[each_instance[instance_index1][0]]
                             item2_index = self.itemset[each_instance[instance_index2][0]]
-                            pdb.set_trace()
                             
                             timespan_count[0, timespan] += 1
                             user_interitems_time[user_index, timespan] += (item1_index <= item2_index) and similarity[item1_index, item2_index] or similarity[item2_index, item1_index]
@@ -255,64 +258,158 @@ class DataAnalysis2(DataAnalysis):
                     user_interitems_time[user_index, :] = user_interitems_time[user_index, :]/timespan_count[0, :] 
                 else:
                     user_interitems_time[user_index, :] = 0
-                if user_index%100 == 0 and user_index != 0:
-                    print "100 users done!"
+                if user_index%10 == 0 and user_index != 0:
+                    print user_index
                 user_index += 1 
 
             try:
                 io.savemat(filepath+"_%s"%sampling_ration, {"user_interitems_time":user_interitems_time}, oned_as='row')
+                self.store_data(json.dumps(relative_timespan, ensure_ascii=False), filepath+"_relative_timespan_%s.json"%sampling_ration)
             except Exception, e:
                 print e
                 sys.exit()
-            return user_interitems_time
+            return [user_interitems_time, relative_timespan]
             
         elif method == "offline":
             try:
                 user_interitems_time = io.loadmat(filepath+"_%s"%sampling_ration, mat_dtype=False)["user_interitems_time"]
+                relative_timespan = self.read_data(filepath+"_relative_timespan_%s.json"%sampling_ration)
+                if relative_timespan != "":
+                    try:
+                        relative_timespan = json.loads(relative_timespan)
+                    except Exception, e:
+                        print e
+                        sys.exit()
+                else:
+                    print "read nothing !"
+                    sys.exit()
             except Exception,e:
                 print e
                 sys.exit()
-            return user_interitems_time
+            return [user_interitems_time, relative_timespan]
 
         else:
             print "method arg error !"
             sys.exit()
 
-    def get_max_relative_timespan(self, calc_set):
-        max_relative_timespan = 0
-        for user, record in calc_set.iteritems():
-            temp = len(record) - 1
-            if max_relative_timespan < temp:
-                max_relative_timespan = temp
-        return max_relative_timespan
+    def calc_userdegree_time_similarity(self, analysis_data, time_type="relative_time"):
+        user_interitems_time, relative_timespan = analysis_data
+        user_interitems_time = user_interitems_time.tocsr()
+        usernum, max_timespan = user_interitems_time.shape
+        user_index = relative_timespan.keys()
+        degree = np.asarray(self.ui_matrix.sum(0)[0, user_index])[0].tolist()
+        degree_time_similarity = {}
+        degree_userindex = {}
+        for each in np.arange(usernum):
+            try:
+                degree_time_similarity[degree[each]] += user_interitems_time[user_index[each], :]
+                degree_userindex[degree[each]].append(user_index[each])
+            except:
+                degree_time_similarity[degree[each]] = user_interitems_time[user_index[each], :]
+                degree_userindex[degree[each]] = [user_index[each]]
+
+        for eachdegree in set(degree):
+            for eachuser in degree_userindex[eachdegree]:
+                timespan_usercount = np.ones([1, max_timespan])*usernum
+                timespan_usercount[0, relative_timespan[eachuser]+1:] -= 1
+            degree_time_similarity[eachdegree] = (degree_time_similarity[eachdegree]/sparse.csc_matrix(timespan_usercount)).toarray()[0].tolist()
+
+        return degree_time_similarity
+
+    def get_relative_timespan(self, calc_set):
+        """get relative timespan for each user in the calc_set"""
+        relative_timespan = {}
+        for user, record in calc_set:
+            relative_timespan[self.userset[user]] = len(record) - 1
+        return relative_timespan
+
+    def draw_graph(self, analysis_data, data_type, time_type="relative_time", save="off"):
+        filepath = "./image2/"
+        if data_type == "similarity_time":
+            plt.figure()
+            user_interitems_time = sparse.csc_matrix(analysis_data[2][0].sum(0))
+            relative_timespan = analysis_data[2][1]
+            usernum, max_timespan = analysis_data[2][0].shape
+            timespan_usercount = np.ones([1, max_timespan])*usernum
+            for eachuser_timespan in relative_timespan.values():
+                timespan_usercount[0, eachuser_timespan+1:] -= 1
+            user_interitems_time = (user_interitems_time/sparse.csc_matrix(timespan_usercount)).toarray()[0].tolist()
+
+
+            time = range(max_timespan+1)[1:]
+            temp = analysis_data[0]
+            interitems_baseline = [temp for each in time]
+            # temp = analysis_data[1].mean()
+            # user_interitems_baseline = [temp for each in time]# user_interitems
+
+            plt.xlabel("relative time")
+            plt.ylabel("similarity")
+            plt.title("similarity_time curves")
+            # pdb.set_trace()
+            plt.plot(time, interitems_baseline, "b-", label="interitems_baseline")
+            plt.plot(time, user_interitems_baseline, "g-", label="user_interitems_baseline")
+            plt.plot(time, user_interitems_time, "r-", label="user_interitems_time")
+
+        elif data_type == "userdegree_time_similarity":
+            degree_time_similarity = self.calc_userdegree_time_similarity(analysis_data[2], time_type="relative_time")
+            max_timespan = analysis_data[2][0].shape[1]
+            time = range(max_timespan+1)[1:]
+            degree = degree_time_similarity.keys()
+
+            # fig = plt.figure()
+            # ax = fig.gca(projection='3d')
+            # surf = ax.plot_surface(time, degree, , rstride=1, cstride=1, linewidth=0, antialiased=False)
+            # ax.set_zlim3d(-1, 1)
+            # ax.w_zaxis.set_major_locator(LinearLocator(6))
+            # plt.show()
+            # cmap = cm.get_cmap("spectral", 1000)
+            # plt.xlabel("relative time")
+            # plt.ylabel("similarity")
+            # plt.title("similarity_time curves")
+        
+        else:
+            print "data_type arg error !"
+            sys.exit()
+        if save == "on":
+            try:
+                plt.savefig(filepath+"%s.png"%data_type)
+            except Exception, e:
+                print e
+        elif save == "off":
+            pass
+        else:
+            print "save arg error !"
+        plt.show()
 
 if __name__ == '__main__':
     datanalysis2 = DataAnalysis2(filepath="../../data/fengniao/fengniao_filtering_0604.txt")
     datanalysis2.import_data()
     datanalysis2.create_ui_matrix("offline")
-    t0 = time.clock()
-    similarity = datanalysis2.create_sim_matrix(block_length=5000, method="offline")
-    t1 = time.clock()
-    print "create_sim_matrix costs: %ss"%(t1 - t0)
-
     # t0 = time.clock()
-    # sampling_ration = 0.0002
-    # datanalysis2.calc_interitems_baseline(similarity, sampling_ration=sampling_ration, method="online")
+    # similarity = datanalysis2.create_sim_matrix(block_length=5000, method="offline")
     # t1 = time.clock()
-    # print "sampling_ration: %s"%sampling_ration
-    # print t1 - t0
+    # print "create_sim_matrix costs: %ss"%(t1 - t0)
+
+    t0 = time.clock()
+    sampling_ration = 0.0002
+    interitems = datanalysis2.calc_interitems_baseline(similarity=0, sampling_ration=sampling_ration, method="offline")
+    t1 = time.clock()
+    print "sampling_ration: %s"%sampling_ration
+    print "calc_interitems_baseline costs: %ss"%(t1 - t0)
 
     # t0 = time.clock()
     # sampling_ration = 0.1
-    # datanalysis2.calc_user_interitems_baseline(similarity, sampling_ration=sampling_ration, method="online")
+    # user_interitems = datanalysis2.calc_user_interitems_baseline(similarity=0, sampling_ration=sampling_ration, method="offline")
     # t1 = time.clock()
     # print "sampling_ration: %s"%sampling_ration
     # print "calc_user_interitems_baseline costs: %ss"%(t1 - t0)
+    # pdb.set_trace()
 
     t0 = time.clock()
     sampling_ration = 0.1
-    datanalysis2.calc_user_interitems_time(similarity, sampling_ration=sampling_ration, method="online")
+    uit = datanalysis2.calc_user_interitems_time(similarity=0, sampling_ration=sampling_ration, method="offline")
     t1 = time.clock()
     print "sampling_ration: %s"%sampling_ration
     print "calc_user_interitems_time costs: %ss"%(t1 - t0)
     
+    datanalysis2.draw_graph(analysis_data=[interitems, 0, uit], data_type="similarity_time", time_type="relative_time", save="on")

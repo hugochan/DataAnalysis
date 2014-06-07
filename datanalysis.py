@@ -14,7 +14,7 @@ class DataAnalysis(object):
     def __init__(self, filepath):
         super(DataAnalysis, self).__init__()
         self._filepath = filepath
-        self.userset = []# user set
+        self.userset = {}# user set: {"user":index,...}
         self.itemset = {}# item set: {"item":index,...}
         self.instanceSet = {}# instance data set: {user:[item,...],...}
         self.instancenum = 0# num of instance
@@ -429,7 +429,8 @@ class DataAnalysis(object):
         if data_type == "degree_distribution":# degree
             x = analysis_data.keys()
             y = analysis_data.values()
-            plt.xlabel("degree(%s)"%target)
+            plt.xscale("log")
+            plt.xlabel("log(degree(%s))"%target)
             plt.ylabel("frequency")
             plt.title("degree distribution")
         elif data_type == "col_sim":# collaborative similarity
