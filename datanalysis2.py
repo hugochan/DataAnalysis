@@ -53,9 +53,15 @@ class DataAnalysis2(DataAnalysis):
             for item_index in range(self.itemnum):
                 self.itemset[temp_itemset[item_index]] = item_index
 
-            # replace the key of instanceSet with user_index
+            # replace the key and value of instanceSet with user_index and item_index
             for k, v in temp_instanceSet.iteritems():
-                self.instanceSet[self.userset[k]] = v
+                uindex = self.userset[k]
+                for eachrecord in v:
+                    try:
+                        self.instanceSet[uindex].append([self.itemset[eachrecord[0]], eachrecord[1]])
+                    except:
+                        self.instanceSet[uindex] = [[self.itemset[eachrecord[0]], eachrecord[1]]]
+
 
             print "user num: %s"%self.usernum
             print "item num: %s"%self.itemnum
@@ -67,7 +73,7 @@ class DataAnalysis2(DataAnalysis):
             self.ui_matrix = sparse.lil_matrix((self.itemnum, self.usernum))
             for user, record in self.instanceSet.iteritems():
                 for eachrecord in record:
-                    self.ui_matrix[self.itemset[eachrecord[0]], user] = 1
+                    self.ui_matrix[eachrecord[0], user] = 1
             try:
                 # io.mmwrite(filepath, self.ui_matrix)
                 io.savemat(filepath, {"ui_matrix":self.ui_matrix}, oned_as='row')
@@ -146,15 +152,14 @@ class DataAnalysis2(DataAnalysis):
                     instancenum = len(each_instance)
                     if instancenum > 1:
                         for instance_index1 in np.arange(instancenum):
+                            item1_index = each_instance[instance_index1][0]
                             for instance_index2 in np.arange(instance_index1+1, instancenum):
-                                item1_index = self.itemset[each_instance[instance_index1][0]]
-                                item2_index = self.itemset[each_instance[instance_index2][0]]
+                                item2_index = each_instance[instance_index2][0]
                                 ave_sim += (item1_index <= item2_index) and similarity[item1_index, item2_index] or similarity[item2_index, item1_index]
                         user_interitems[each_user, 0] = ave_sim/(instancenum*(instancenum-1)/2)
                     else:
                         user_interitems[each_user, 0] = 0
-                    if each_user%100 == 0 and each_user != 0:
-                        print "100 users done!"
+                    print each_user
 
             elif sampling_ration > 0 and sampling_ration < 1:
                 sampling_num = int(sampling_ration*self.usernum)
@@ -167,15 +172,14 @@ class DataAnalysis2(DataAnalysis):
                     if instancenum > 1:
                         for instance_index1 in np.arange(instancenum):
                             for instance_index2 in np.arange(instance_index1+1, instancenum):
-                                item1_index = self.itemset[each_instance[instance_index1][0]]
-                                item2_index = self.itemset[each_instance[instance_index2][0]]
+                                item1_index = each_instance[instance_index1][0]
+                                item2_index = each_instance[instance_index2][0]
                                 ave_sim += (item1_index <= item2_index) and similarity[item1_index, item2_index] or similarity[item2_index, item1_index]
                         user_interitems[user_index, 0] = ave_sim/(instancenum*(instancenum-1)/2)
                     else:
                         user_interitems[user_index, 0] = 0
-                    if user_index%100 == 0 and user_index != 0:
-                        print "100 users done!"
                     user_index += 1
+                    print user_index
 
             else:
                 print "sampling_ration arg error !"
@@ -202,43 +206,68 @@ class DataAnalysis2(DataAnalysis):
     def calc_user_interitems_time(self, similarity, sampling_ration=1, method="online"):
         filepath = "./offline_results2/user_interitems_time"
         if method == "online":
+            # valid_relative_timespan_ratio = 0.001# to be adjusted
             if sampling_ration == 1:
                 calc_set =  self.instanceSet.items()
                 sampling_num = self.usernum
 
             elif sampling_ration > 0 and sampling_ration < 1:
                 sampling_num = int(sampling_ration*self.usernum)
-                print "sampling_num: %s"%sampling_num
                 calc_set =  random.sample(self.instanceSet.items(), sampling_num)
 
             else:
                 print "sampling_ration arg error !"
                 sys.exit()
-            
+            print "sampling_num: %s"%sampling_num
             relative_timespan = self.get_relative_timespan(calc_set)
             calc_set = dict(calc_set)# to make sure calc_set and relative_timespan have the same key order
             max_relative_timespan = max(relative_timespan.values())
-            user_interitems_time = sparse.lil_matrix((sampling_num, max_relative_timespan))
+            print "max_relative_timespan: %s"%max_relative_timespan
+            
+            # count user num of each timespan
+            timespan_usercount = np.ones([1, max_relative_timespan])*sampling_num
+            for eachuser_timespan in relative_timespan.values():
+                timespan_usercount[0, eachuser_timespan:] -= 1
 
+            # get maximul valid relative timespan
+            valid_usercount = 10# int(valid_relative_timespan_ratio*sampling_num)
+            print "valid_usercount: %s"%valid_usercount
+
+            i = max_relative_timespan - 1
+            while i >= 0:
+                if timespan_usercount[0, i] >= valid_usercount:
+                    maxvalid_relative_timespan = i + 1
+                    break
+                i -= 1
+
+            print "maxvalid_relative_timespan: %s"%maxvalid_relative_timespan
+            # adjust relative_timespan, maximul value should be maxvalid_relative_timespan
+            for user, timespan in relative_timespan.iteritems():
+                if timespan > maxvalid_relative_timespan:
+                    relative_timespan[user] = maxvalid_relative_timespan
+
+            user_interitems_time = sparse.lil_matrix((sampling_num, maxvalid_relative_timespan))
             user_index = 0
             for each_user, each_instance in calc_set.iteritems():
                 instancenum = len(each_instance)
                 if instancenum > 1:
-                    timespan_count = sparse.lil_matrix((1, max_relative_timespan))
-                    for instance_index1 in np.arange(instancenum):
-                        for instance_index2 in np.arange(instance_index1+1, instancenum):
-                            timespan = instance_index2 - instance_index1 - 1
-                            item1_index = self.itemset[each_instance[instance_index1][0]]
-                            item2_index = self.itemset[each_instance[instance_index2][0]]
-                            
+                    timespan_count = sparse.lil_matrix((1, maxvalid_relative_timespan))
+                    instance_index1 = 0
+                    for instance1 in each_instance:
+                        # if user_index == 61:
+                        #     print " %s"%instance_index1
+                        instance_index2 = instance_index1 + 1
+                        for instance2 in each_instance[instance_index1+1:min(instancenum, instance_index1 + maxvalid_relative_timespan)]:
+                            timespan = instance_index2 - instance_index1 - 1                            
                             timespan_count[0, timespan] += 1
-                            user_interitems_time[user_index, timespan] += (item1_index <= item2_index) and similarity[item1_index, item2_index] or similarity[item2_index, item1_index]
+                            user_interitems_time[user_index, timespan] += similarity[min(instance1[0], instance2[0]), max(instance1[0], instance2[0])]
+                            instance_index2 += 1
+                        instance_index1 += 1
                     user_interitems_time[user_index, :] = user_interitems_time[user_index, :]/timespan_count[0, :] 
                     
                 else:
                     user_interitems_time[user_index, :] = 0
-                if user_index%10 == 0 and user_index != 0:
-                    print user_index
+                print user_index
                 user_index += 1 
 
             relative_timespan = relative_timespan.items()# I can`t believe the order of a dict, so transfer to a list
@@ -379,10 +408,10 @@ if __name__ == '__main__':
     datanalysis2 = DataAnalysis2(filepath="../../data/fengniao/fengniao_filtering_0604.txt")
     datanalysis2.import_data()
     datanalysis2.create_ui_matrix("offline")
-    # t0 = time.clock()
-    # similarity = datanalysis2.create_sim_matrix(block_length=5000, method="offline")
-    # t1 = time.clock()
-    # print "create_sim_matrix costs: %ss"%(t1 - t0)
+    t0 = time.clock()
+    similarity = datanalysis2.create_sim_matrix(block_length=5000, method="offline")
+    t1 = time.clock()
+    print "create_sim_matrix costs: %ss"%(t1 - t0)
 
     # t0 = time.clock()
     # sampling_ration = 0.0002
@@ -392,16 +421,17 @@ if __name__ == '__main__':
     # print "calc_interitems_baseline costs: %ss"%(t1 - t0)
 
     # t0 = time.clock()
-    # sampling_ration = 0.1
+    # sampling_ration = 0.5
     # user_interitems = datanalysis2.calc_user_interitems_baseline(similarity=0, sampling_ration=sampling_ration, method="offline")
     # t1 = time.clock()
     # print "sampling_ration: %s"%sampling_ration
     # print "calc_user_interitems_baseline costs: %ss"%(t1 - t0)
 
     t0 = time.clock()
-    sampling_ration = 0.001
-    uit = datanalysis2.calc_user_interitems_time(similarity=0, sampling_ration=sampling_ration, method="offline")
+    sampling_ration = 1
+    uit = datanalysis2.calc_user_interitems_time(similarity=similarity, sampling_ration=sampling_ration, method="online")
     t1 = time.clock()
     print "sampling_ration: %s"%sampling_ration
     print "calc_user_interitems_time costs: %ss"%(t1 - t0)
-    datanalysis2.draw_graph(analysis_data=[0, 0, uit], data_type="userdegree_time_similarity", time_type="relative_time", save="on")
+    
+    # datanalysis2.draw_graph(analysis_data=[interitems, user_interitems, uit], data_type="similarity_time", time_type="relative_time", save="on")
