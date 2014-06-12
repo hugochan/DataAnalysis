@@ -216,3 +216,12 @@ pip-log.txt
 ./image
 ./offline_results
 .txt
+
+#############
+## results
+#############
+image/
+image2/
+offline_results/
+offline_results2/
+*.txt

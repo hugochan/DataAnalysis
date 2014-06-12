@@ -11,9 +11,10 @@ import pdb, time
 
 class DataAnalysis(object):
     """do some data analysis"""
-    def __init__(self, filepath):
+    def __init__(self, filepath, dataset_name):
         super(DataAnalysis, self).__init__()
         self._filepath = filepath
+        self.dataset_name = dataset_name
         self.userset = {}# user set: {"user":index,...}
         self.itemset = {}# item set: {"item":index,...}
         self.instanceSet = {}# instance data set: {user:[item,...],...}
@@ -547,7 +548,7 @@ class DataAnalysis(object):
         return data
 
 if __name__ == '__main__':
-    data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt")
+    data_analysis = DataAnalysis(filepath="../../data/k_5_2/sample_fengniao.txt", dataset_name="fengniao")
     data_analysis.import_data()
     t0 = time.clock()
     data_analysis.create_ui_matrix("online")
